@@ -170,22 +170,21 @@ static void display_boot_self_test(void) {
  * Register assignments confirmed from the official M5StickC-Plus library:
  *   LDO2 (reg 0x12 bit 2) = TFT backlight LED power
  *   LDO3 (reg 0x12 bit 3) = TFT controller logic power
- *   GPIO0 (reg 0x90 = 0x02, LDO mode; voltage reg 0x91) = additional supply
- * All three must be enabled for the display to work.
- * Plus 2 does NOT have an AXP192; its backlight is driven by GPIO 27 directly. */
+ * Both must be enabled for the display to work.
+ * Plus 2 does NOT have an AXP192; its backlight is driven by GPIO 27 directly.
+ *
+ */
 #ifdef M5STICKC_PLUS_11
 
 #define AXP192_I2C_ADDR         0x34  /* AXP192 I2C address                          */
 #define AXP192_LDO23_VOL_REG    0x28  /* LDO2[7:4] / LDO3[3:0] voltage              */
 #define AXP192_PWR_OUT_CTRL_REG 0x12  /* Power output enable                         */
-#define AXP192_GPIO0_CTRL_REG   0x90  /* GPIO0 function: 0x02 = LDO output mode      */
-#define AXP192_GPIO0_LDO_REG    0x91  /* GPIO0 LDO / RTC voltage (bits [7:4])        */
-/* 0x4D = EXTEN(bit6) | LDO3(bit3) | LDO2(bit2) | DCDC1(bit0) — matches M5Stack begin() */
+/* 0x4D = DCDC1(bit6) | LDO3(bit3) | LDO2(bit2) | EXTEN(bit0)
+ * DCDC1 defaults to 3.3 V at power-on (reg 0x26 = 0x68); enabling it here is
+ * safe and required for stable RF/BLE operation on Plus 1.1. */
 #define AXP192_DISPLAY_PWR_BITS 0x4D
 /* LDO voltage encoding: val = (mV - 1800) / 100; 0xC → 3000 mV */
 #define AXP192_LDO23_3V0        0xCC  /* LDO2 = 3.0 V, LDO3 = 3.0 V                */
-#define AXP192_GPIO0_LDO_3V3    0xF0  /* GPIO0 LDO = 3.3 V (bits [7:4] = 0xF)       */
-#define AXP192_GPIO0_LDO_MODE   0x02  /* GPIO0 function = LDO output                 */
 
 static esp_err_t axp192_write_reg(uint8_t reg, uint8_t val) {
     uint8_t buf[2] = {reg, val};
@@ -201,16 +200,13 @@ static esp_err_t axp192_read_reg(uint8_t reg, uint8_t *val) {
 /**
  * @brief Power on the TFT display via AXP192 (Plus 1.1 only).
  *
- * Replicates the display-relevant subset of the official M5StickC-Plus
- * AXP192::begin() sequence:
- *   - LDO2 (backlight) + LDO3 (LCD logic) set to 3.0 V and enabled
- *   - GPIO0 placed in LDO mode at 3.3 V
+ * Enables LDO2 (backlight) and LDO3 (LCD logic) on the AXP192 at 3.0 V.
  *
  * Must be called after m5stickc_plus2_i2c_init().
  * Non-fatal: logs a warning and continues if any step fails.
  */
 static esp_err_t m5stickc_plus11_axp192_display_on(void) {
-    ESP_LOGI(TAG, "AXP192: powering on display (LDO2=backlight, LDO3=logic, GPIO0=LDO)");
+    ESP_LOGI(TAG, "AXP192: powering on display (LDO2=backlight, LDO3=logic)");
 
     /* Set LDO2 and LDO3 voltages to 3.0 V */
     esp_err_t ret = axp192_write_reg(AXP192_LDO23_VOL_REG, AXP192_LDO23_3V0);
@@ -269,7 +265,7 @@ int m5stickc_plus2_init(void) {
     }
 
 #ifdef M5STICKC_PLUS_11
-    /* Power on TFT display via AXP192 (LDO2=backlight, LDO3=logic, GPIO0=LDO).
+    /* Power on TFT display via AXP192 (LDO2=backlight, LDO3=logic).
      * Non-fatal: init continues even if AXP192 is not responding. */
     ret = m5stickc_plus11_axp192_display_on();
     if (ret != ESP_OK) {

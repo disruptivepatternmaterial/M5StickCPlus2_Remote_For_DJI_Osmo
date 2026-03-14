@@ -915,7 +915,7 @@ void ui_detect_device_and_set_scale(void) {
     g_layout.status_x = 220;                    /* Connection status indicator position */
     g_layout.status_y = 12;
     g_layout.connection_radius = 7;             /* Size of connection status indicator */
-    g_layout.dots_y = 120;                      /* Screen indicator dots vertical position */
+    g_layout.dots_y = 128;                      /* Screen indicator dots vertical position */
     g_layout.dots_spacing = 25;                 /* Horizontal spacing between screen dots */
     g_layout.dots_start_x = 45;                 /* Starting x position for screen dots */
     g_layout.instruct_x = 8;                    /* Instruction text position */
