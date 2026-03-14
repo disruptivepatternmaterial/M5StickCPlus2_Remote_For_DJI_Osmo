@@ -178,6 +178,9 @@ void app_main(void) {
     static uint32_t reconnection_timer = 0;
     static const uint32_t RECONNECTION_INTERVAL_MS = 15000;
 
+    /* Track connection state to refresh status square on change */
+    static connect_state_t s_last_conn_state = (connect_state_t)-1;
+
     /* Motion-triggered recording state */
     static bool     s_want_record    = false;  /* pending: set mode + start recording once connected */
     static bool     s_is_recording   = false;  /* true while camera is recording via motion trigger */
@@ -397,6 +400,15 @@ void app_main(void) {
                 }
             }
         }
+        /* Redraw whenever connection state changes so the status square updates */
+        {
+            connect_state_t curr_conn = connect_logic_get_state();
+            if (curr_conn != s_last_conn_state) {
+                s_last_conn_state = curr_conn;
+                g_ui_state.display_needs_update = true;
+            }
+        }
+
         ui_update_display();
 
         /* Immediate reconnect trigger after unexpected BLE disconnect.

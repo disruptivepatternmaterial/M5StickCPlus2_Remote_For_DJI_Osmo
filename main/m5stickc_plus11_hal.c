@@ -6,6 +6,7 @@
 
 #include "m5stickc_plus11_hal.h"
 
+#include "logo_bitmap.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
@@ -156,12 +157,9 @@ static void display_boot_self_test(void) {
         return;
     }
 
-    const int band_width = M5_LCD_H_RES / 3;
-    m5stickc_plus2_display_fill_rect(0, 0, band_width, M5_LCD_V_RES, M5_COLOR_RED);
-    m5stickc_plus2_display_fill_rect(band_width, 0, band_width, M5_LCD_V_RES, M5_COLOR_GREEN);
-    m5stickc_plus2_display_fill_rect(band_width * 2, 0, M5_LCD_H_RES - (band_width * 2), M5_LCD_V_RES, M5_COLOR_BLUE);
-    m5stickc_plus2_display_print_scaled(8, 8, "DISPLAY TEST", M5_COLOR_WHITE, 2);
-    /* Hold long enough to confirm display is working, but well under the 5 s TWDT */
+    m5stickc_plus2_display_clear(M5_COLOR_BLACK);
+    m5stickc_plus2_display_draw_bitmap(LOGO_X, LOGO_Y, LOGO_W, LOGO_H,
+                                       logo_bitmap, M5_COLOR_WHITE, M5_COLOR_BLACK);
     vTaskDelay(pdMS_TO_TICKS(2000));
     m5stickc_plus2_display_clear(M5_COLOR_BLACK);
 }
