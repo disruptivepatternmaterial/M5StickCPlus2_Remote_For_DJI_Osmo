@@ -67,6 +67,7 @@ int m5stickc_plus2_init(void);
  * @return ESP_OK on success, error code otherwise
  */
 int m5stickc_plus2_power_init(void);
+void m5stickc_plus2_power_off(void);
 
 /**
  * @brief Initialize I2C bus for peripherals

@@ -1,0 +1,45 @@
+[0;33mW (13880) DATA: Wait for seq=0x0001 timed out[0m
+[0;31mE (13880) LOGIC_COMMAND: Failed to get parse result for seq=0x0001, error: 0x107[0m
+[0;33mW (18882) DATA: Timeout while waiting for cmd_set=0x0000 cmd_id=0x0019, no entry found[0m
+[0;31mE (18882) LOGIC_CONNECT: Timeout or error waiting for camera connection command, GOTO Failed.[0m
+[0;32mI (18889) LOGIC_CONNECT: Disconnecting camera...[0m
+[0;33mW (18895) BT_HCI: hci cmd send: disconnect: hdl 0x0, rsn:0x13[0m
+[0;33mW (18901) BT_APPL: gattc_conn_cb: if=3 st=0 id=3 rsn=0x16[0m
+[0;33mW (18909) BT_HCI: hcif disc complete: hdl 0x0, rsn 0x16[0m
+[0;32mI (18913) BLE: Disconnected, reason=0x16[0m
+[0;32mI (18917) LOGIC_CONNECT: Normal disconnection process.[0m
+[0;32mI (18923) LOGIC_CONNECT: Current state: DISCONNECTED.[0m
+[0;32mI (18928) LOGIC_CONNECT: Camera disconnected successfully[0m
+[0;33mW (20508) UI: Protocol connection failed during reconnection[0m
+[0;32mI (20711) UI: Display updated - Screen: CONNECT[0m
+[0;32mI (20711) UI: Initializing GPIO trigger system[0m
+[0;32mI (20711) UI: Current device ID: 0xE7A00B39[0m
+[0;32mI (20715) gpio: GPIO[0]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:2 [0m
+[0;32mI (20724) gpio: GPIO[26]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 1| Intr:1 [0m
+[0;32mI (20734) gpio: GPIO[25]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 1| Intr:1 [0m
+[0;32mI (20744) UI: GPIO trigger system initialized successfully[0m
+[0;32mI (20749) UI:   G0 (SHUTTER): Pull LOW to trigger[0m
+[0;32mI (20754) UI:   G26 (SLEEP): Pull HIGH to trigger[0m
+[0;32mI (20760) UI:   G25 (WAKE): Pull HIGH to trigger[0m
+[0;32mI (20765) MAIN: UI system initialized[0m
+[0;32mI (20770) MOTION: Motion detection ready (first sample: -0.03g -0.08g 1.07g)[0m
+[0;32mI (20777) FLOW: motion imu_ok=1[0m
+[0;32mI (20781) MAIN: Motion detection initialized[0m
+[0;32mI (20786) GPS: GPS placeholder — stub fix Zurich CH (TX=0 RX=26)[0m
+[0;32mI (20793) GPS: GPS will use real module when M5Stack GPS Module v2.0 is wired[0m
+[0;32mI (20800) MAIN: GPS initialized[0m
+[0;32mI (20804) MAIN: System ready - Icon-based UI active![0m
+[0;32mI (20810) MAIN: Button A: Select/execute current option[0m
+[0;32mI (20816) MAIN: Button B: Cycle through options[0m
+[0;32mI (22771) FLOW: motion dev=0.054 state=0[0m
+[0;32mI (22771) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (24773) FLOW: motion dev=0.061 state=0[0m
+[0;32mI (24773) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (26775) FLOW: motion dev=0.061 state=0[0m
+[0;32mI (26775) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (28777) FLOW: motion dev=0.062 state=0[0m
+[0;32mI (28777) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (30779) FLOW: motion dev=0.049 state=0[0m
+[0;32mI (30780) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (32781) FLOW: motion dev=0.062 state=0[0m
+[0;32mI (32781) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m

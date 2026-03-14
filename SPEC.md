@@ -28,17 +28,31 @@ Sequence: wake (if needed) → set mode → shutter start → … → shutter st
 
 **Shooting parameters** (sent by this firmware where the DJI BLE protocol allows):
 
-- **Loop Recording**: Enable; segment length 3–5 min (dashcam-style overwrite).
-- **Resolution**: 4K (16:9) @ 30 fps or 1080p (16:9) @ 30 fps.
-- **Stabilization**: RockSteady (avoid HorizonSteady for dashcam).
-- **FOV**: Wide or Natural Wide.
-- **Bit rate**: High.
-- **Video Quality Priority**: Off for long runs (reduces heat).
-- **Screen**: Auto off or short delay (saves power when USB-powered).
+The DJI BLE protocol as implemented exposes only the following **writable** commands:
 
-If the protocol does not expose a given setting, document the gap and the user
-configures it once on the camera; otherwise this firmware sets it on connect or
-before start record.
+| CmdSet | CmdID | Command |
+|--------|-------|---------|
+| 0x1D   | 0x03  | Record start / stop |
+| 0x1D   | 0x04  | Camera mode switch |
+| 0x1D   | 0x05  | Status subscription |
+| 0x00   | 0x11  | Key report |
+| 0x00   | 0x17  | GPS data push |
+| 0x00   | 0x19  | Connection request |
+| 0x00   | 0x1A  | Power mode (sleep/wake) |
+
+All other camera settings (resolution, FPS, EIS, FOV, bit rate, loop recording,
+screen timeout, video quality priority) are received as **read-only** status fields
+via the 0x1D:0x02 status push. There is no BLE command to set them remotely.
+
+**⚠ Protocol gaps — configure once on the camera:**
+
+- **Loop Recording**: Enable on the camera; set segment length to 3–5 min (dashcam-style overwrite). The remote cannot set this.
+- **Resolution**: Set 4K 16:9 @ 30 fps or 1080p 16:9 @ 30 fps on the camera. The remote cannot set this.
+- **Stabilization**: Set RockSteady (EIS mode 1) on the camera. Avoid HorizonSteady for dashcam use. The remote cannot set this.
+- **FOV**: Set Wide or Natural Wide on the camera. The remote cannot set this.
+- **Bit rate**: Set High on the camera. The remote cannot set this.
+- **Video Quality Priority**: Set Off on the camera (reduces heat on long runs). The remote cannot set this.
+- **Screen**: Set Auto-off or short delay on the camera (saves power when USB-powered). The remote cannot set this.
 
 ## Motion Detection
 
@@ -74,3 +88,7 @@ before start record.
 - https://github.com/rhoenschrat/DJI-Remote
 - https://github.com/dji-sdk/Osmo-GPS-Controller-Demo
 - https://github.com/xaionaro-go/djictl
+- https://shop.m5stack.com/products/m5stickc-plus-esp32-pico-mini-iot-development-kit?srsltid=AfmBOoowTnRHHiPWqb0e6R41u3HLd33-PyM8mvr4PGcRLx7NE6iTvOV8
+- https://docs.m5stack.com/en/core/m5stickc_plus
+- When downloading programs to the device, it is recommended to select one of the following serial baud rates. Using other speeds may cause the program to fail to download correctly. 1500000 bps / 750000 bps / 500000 bps / 250000 bps / 115200 bps
+- Added sleep and wake functions, version changed to v1.1

@@ -44,9 +44,9 @@
 #define MOTION_CONFIRM_SAMPLES      3U
 
 /* Duration of continuous quiet before declaring vehicle stopped (ms).
- * Set to 1 for production (5 min); 0 for testing (15 s). See SPEC.md. */
+ * 1 = production (5 min), 0 = development (15 s).  See SPEC.md. */
 #ifndef MOTION_USE_PRODUCTION_TIMEOUT
-#define MOTION_USE_PRODUCTION_TIMEOUT  0
+#define MOTION_USE_PRODUCTION_TIMEOUT  1
 #endif
 #define MOTION_STOP_TIMEOUT_MS  ((MOTION_USE_PRODUCTION_TIMEOUT) ? 300000UL : 15000UL)
 
@@ -193,4 +193,20 @@ uint32_t motion_logic_get_stop_countdown_sec_remaining(void) {
         ? 0U
         : (MOTION_STOP_TIMEOUT_MS - s_quiet_ms);
     return remaining_ms / 1000U;
+}
+
+void motion_logic_force_idle(void) {
+    s_state         = MOTION_STATE_IDLE;
+    s_quiet_ms      = 0U;
+    s_start_counter = 0U;
+    /* Do NOT set s_just_stopped — caller handles any camera stop command directly. */
+    ESP_LOGI(TAG, "State forced → IDLE (manual button)");
+}
+
+void motion_logic_force_active(void) {
+    s_state         = MOTION_STATE_MOVING;
+    s_quiet_ms      = 0U;
+    s_start_counter = 0U;
+    /* Do NOT set s_just_started — caller handles the start command directly. */
+    ESP_LOGI(TAG, "State forced → MOVING (manual button)");
 }
