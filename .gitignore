@@ -5,3 +5,5 @@
 /managed_components
 .pio
 .DS_Store
+.cursor/live_log.txt
+.cursor/debug-*.log
