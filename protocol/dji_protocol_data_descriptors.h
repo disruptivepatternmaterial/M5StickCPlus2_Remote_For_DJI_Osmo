@@ -40,4 +40,7 @@ int key_report_parser(const uint8_t *data, size_t data_length, void *structure_o
 uint8_t* camera_power_mode_switch_creator(const void *structure, size_t *data_length, uint8_t cmd_type);
 int camera_power_mode_switch_parser(const uint8_t *data, size_t data_length, void *structure_out, uint8_t cmd_type);
 
+/* GPS data push (CmdSet=0x00, CmdID=0x17) – no response */
+uint8_t* gps_data_push_creator(const void *structure, size_t *data_length, uint8_t cmd_type);
+
 #endif

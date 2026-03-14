@@ -8,6 +8,10 @@
 #include "esp_gatt_defs.h"
 #include "esp_gattc_api.h"
 
+#ifndef ESP_BLE_ADV_NAME_LEN_MAX
+#define ESP_BLE_ADV_NAME_LEN_MAX 31
+#endif
+
 /* Connection status structure */
 typedef struct {
     bool is_connected; // Connection status

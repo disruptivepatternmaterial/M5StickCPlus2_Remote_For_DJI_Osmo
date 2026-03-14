@@ -55,6 +55,12 @@
  */
 #define MAX_SEQ_ENTRIES 10
 
+/* Depth of the incoming BLE notification queue.
+ * The camera can burst many frames per second during connection negotiation;
+ * 64 slots prevents overflow without significant memory cost (64 × 8 = 512 bytes).
+ */
+#define NOTIFY_QUEUE_DEPTH 64
+
 /* Cleanup timer interval for expired entry removal
  * Runs every 60 seconds to clean up stale command entries
  */
@@ -413,7 +419,7 @@ void data_init(void) {
     }
 
     // Initialize notification queue
-    notify_queue = xQueueCreate(MAX_SEQ_ENTRIES, sizeof(notify_data_t));
+    notify_queue = xQueueCreate(NOTIFY_QUEUE_DEPTH, sizeof(notify_data_t));
     if (notify_queue == NULL) {
         ESP_LOGE(TAG, "Failed to create notification queue");
     }

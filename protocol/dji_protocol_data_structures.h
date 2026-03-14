@@ -108,4 +108,37 @@ typedef struct __attribute__((packed)) {
     uint8_t ret_code;             // Return code: 0 for success, non-zero for failure
 } camera_power_mode_switch_response_frame_t;
 
+/*
+ * GPS data push — CmdSet 0x00, CmdID 0x17.
+ * No response expected from camera.
+ *
+ * Field units (per DJI protocol, sourced from rhoenschrat/DJI-Remote):
+ *   year_month_day      YYYYMMDD integer
+ *   hour_minute_second  HHMMSS integer
+ *   gps_longitude       degrees × 1e7  (positive = East)
+ *   gps_latitude        degrees × 1e7  (positive = North)
+ *   height              millimetres above sea level
+ *   speed_to_north      cm/s (positive = North)
+ *   speed_to_east       cm/s (positive = East)
+ *   speed_to_wnward     cm/s downward (note: DJI source spelling preserved)
+ *   vertical_accuracy   metres
+ *   horizontal_accuracy metres
+ *   speed_accuracy      m/s
+ *   satellite_number    must be > 0 for camera to embed GPS in video metadata
+ */
+typedef struct __attribute__((packed)) {
+    int32_t year_month_day;
+    int32_t hour_minute_second;
+    int32_t gps_longitude;
+    int32_t gps_latitude;
+    int32_t height;
+    float   speed_to_north;
+    float   speed_to_east;
+    float   speed_to_wnward;
+    float   vertical_accuracy;
+    float   horizontal_accuracy;
+    float   speed_accuracy;
+    uint8_t satellite_number;
+} gps_data_push_command_frame_t;
+
 #endif

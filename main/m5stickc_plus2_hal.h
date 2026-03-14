@@ -172,6 +172,29 @@ void m5stickc_plus2_display_fill_circle(int x, int y, int radius, uint16_t color
  */
 void m5stickc_plus2_display_fill_rect(int x, int y, int width, int height, uint16_t color);
 
+/**
+ * @brief Initialize MPU6886 6-axis IMU
+ *
+ * Wakes the chip from sleep, configures accelerometer to ±8g range,
+ * and verifies WHO_AM_I register (expected 0x19).
+ *
+ * @return ESP_OK on success, ESP_ERR_* on failure
+ */
+int m5stickc_plus2_imu_init(void);
+
+/**
+ * @brief Read accelerometer data from MPU6886
+ *
+ * Returns calibrated acceleration in g units for each axis.
+ * Call after m5stickc_plus2_imu_init().
+ *
+ * @param ax Pointer to X-axis output (g)
+ * @param ay Pointer to Y-axis output (g)
+ * @param az Pointer to Z-axis output (g)
+ * @return ESP_OK on success, ESP_ERR_* on failure
+ */
+int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az);
+
 /* Color definitions (RBG565 - green and blue are swapped on this display) */
 #define M5_COLOR_BLACK      0x0000
 #define M5_COLOR_WHITE      0xFFFF

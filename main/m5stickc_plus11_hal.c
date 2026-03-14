@@ -1,39 +1,11 @@
 /*
- * DJI Camera Remote Control - M5StickC Plus2 Hardware Abstraction Layer
- * Compiled only when not building for M5Stick C Plus 1.1 (see m5stickc_plus11_hal.c).
+ * M5StickC Plus 1.1 Hardware Abstraction Layer (LCD: DC=23, RST=18).
+ * Same API as Plus2 HAL; compiled only when M5STICKC_PLUS_11 is defined.
  */
-#ifndef M5STICKC_PLUS_11
+#ifdef M5STICKC_PLUS_11
 
-/*
- * This file implements the complete hardware abstraction layer for the M5StickC Plus2
- * development board, providing unified interfaces for all hardware components:
- * 
- * Hardware Components:
- * - ST7789 TFT LCD Display (240x135, 16-bit color)
- * - Power management (hold circuit, backlight PWM)
- * - Physical buttons (A, B, Power)
- * - I2C bus (IMU, RTC communication)
- * - SPI bus (display communication)
- * - GPIO control and monitoring
- * 
- * Display Features:
- * - Hardware-accelerated bitmap rendering
- * - Text rendering with scalable 8x8 font
- * - Color fill operations with RGB565 format
- * - Transparent bitmap drawing
- * - Configurable brightness control
- * 
- * The HAL provides a clean interface for the UI layer while handling all
- * low-level hardware details, timing, and ESP-IDF driver integration.
- * 
- * Hardware: M5StickC Plus2 (ESP32-PICO-V3)
- * Display: ST7789 controller, 240x135 resolution
- * Framework: ESP-IDF v5.5 with ESP-LCD drivers
- * 
- * Based on M5Stack hardware specifications
- */
+#include "m5stickc_plus11_hal.h"
 
-#include "m5stickc_plus2_hal.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
@@ -1085,4 +1057,4 @@ int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az) {
     return ESP_OK;
 }
 
-#endif /* !M5STICKC_PLUS_11 */
+#endif /* M5STICKC_PLUS_11 */

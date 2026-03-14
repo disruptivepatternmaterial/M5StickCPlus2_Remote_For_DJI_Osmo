@@ -3,3 +3,5 @@
 .vscode
 /build
 /managed_components
+.pio
+.DS_Store

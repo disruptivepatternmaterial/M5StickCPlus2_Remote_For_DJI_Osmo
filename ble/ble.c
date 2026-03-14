@@ -39,6 +39,9 @@
  */
 
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
 #include "ble.h"
 #include "nvs.h"
 #include "nvs_flash.h"
@@ -138,8 +141,30 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
 static void gattc_event_handler(esp_gattc_cb_event_t event,
                                 esp_gatt_if_t gattc_if,
                                 esp_ble_gattc_cb_param_t *param);
+static void try_to_connect(esp_bd_addr_t addr);
 
 static TimerHandle_t scan_timer;
+
+/* Deferred connect: run try_to_connect in a dedicated task (not timer daemon) to avoid reset */
+static TimerHandle_t deferred_connect_timer;
+static esp_bd_addr_t s_deferred_connect_addr;
+static TaskHandle_t s_connect_task_handle = NULL;
+
+static void connect_task(void *pvParameters) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        ESP_LOGI(TAG, "FLOW: connect_task calling try_to_connect");
+        try_to_connect(s_deferred_connect_addr);
+    }
+}
+
+static void deferred_connect_timer_callback(TimerHandle_t xTimer) {
+    if (s_connect_task_handle != NULL) {
+        xTaskNotifyGive(s_connect_task_handle);
+    } else {
+        try_to_connect(s_deferred_connect_addr);
+    }
+}
 
 void scan_stop_timer_callback(TimerHandle_t xTimer) {
     esp_ble_gap_stop_scanning();
@@ -171,6 +196,7 @@ static void trigger_scan_task(void) {
  *         - Others on failure
  */
 esp_err_t ble_init() {
+    ESP_LOGI(TAG, "ble_init: start");
     /* Initialize NVS */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -191,25 +217,28 @@ esp_err_t ble_init() {
     }
 
     /* Start the BLE controller */
+    ESP_LOGI(TAG, "ble_init: enabling controller...");
     ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
     if (ret) {
         ESP_LOGE(TAG, "enable controller failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    ESP_LOGI(TAG, "ble_init: controller enabled");
 
     /* Initialize the Bluedroid stack */
+    ESP_LOGI(TAG, "ble_init: bluedroid_init...");
     ret = esp_bluedroid_init();
     if (ret) {
         ESP_LOGE(TAG, "init bluedroid failed: %s", esp_err_to_name(ret));
         return ret;
     }
-
-    /* Enable Bluedroid */
+    ESP_LOGI(TAG, "ble_init: bluedroid_enable...");
     ret = esp_bluedroid_enable();
     if (ret) {
         ESP_LOGE(TAG, "enable bluedroid failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    ESP_LOGI(TAG, "ble_init: bluedroid enabled");
 
     /* Register GAP callback */
     ret = esp_ble_gap_register_callback(gap_event_handler);
@@ -235,6 +264,14 @@ esp_err_t ble_init() {
     /* Set local MTU (optional) */
     esp_ble_gatt_set_local_mtu(500);
 
+    /* Dedicated task for try_to_connect (avoids running from timer daemon / callback context) */
+    if (s_connect_task_handle == NULL) {
+        BaseType_t created = xTaskCreate(connect_task, "ble_conn", 2048, NULL, 5, &s_connect_task_handle);
+        if (created != pdPASS) {
+            s_connect_task_handle = NULL;
+        }
+    }
+
     ESP_LOGI(TAG, "ble_init success!");
     return ESP_OK;
 }
@@ -246,8 +283,7 @@ esp_err_t ble_init() {
  * @return esp_err_t
  */
 esp_err_t ble_start_scanning_and_connect(void) {
-    // TODO: Add reconnection logic; current implementation has issues and needs to be fixed.
-    if(ble_get_reconnecting()) {
+    if (ble_get_reconnecting()) {
         return ble_reconnect();
     }
 
@@ -269,6 +305,7 @@ esp_err_t ble_start_scanning_and_connect(void) {
 }
 
 static void try_to_connect(esp_bd_addr_t addr) {
+    ESP_LOGI(TAG, "FLOW: try_to_connect entry");
     // Check if already connecting
     if (s_connecting) {
         ESP_LOGW(TAG, "Already in connecting state, please wait...");
@@ -296,10 +333,12 @@ static void try_to_connect(esp_bd_addr_t addr) {
              addr[3], addr[4], addr[5]);
 
     // Do not call lightly, if you connect to a non-existent device address, you will have to wait a while before you can connect again
+    ESP_LOGI(TAG, "FLOW: before esp_ble_gattc_open");
     esp_ble_gattc_open(s_ble_profile.gattc_if,
                        addr,
                        BLE_ADDR_TYPE_PUBLIC,
                        true);
+    ESP_LOGI(TAG, "FLOW: after esp_ble_gattc_open");
 }
 
 void ble_set_reconnecting(bool flag) {
@@ -336,13 +375,20 @@ esp_err_t ble_reconnect(void) {
              best_addr[0], best_addr[1], best_addr[2],
              best_addr[3], best_addr[4], best_addr[5]);
 
-    // Set reconnection mode flag
-    s_is_reconnecting = true;
-    s_found_previous_device = false;  // Reset discovery flag
-    
-    // Start scan task
-    trigger_scan_task();
-    
+    /* Reconnection: connect directly to known address without scanning to avoid reset in GAP scan-result callback */
+    memcpy(s_deferred_connect_addr, best_addr, sizeof(esp_bd_addr_t));
+    if (deferred_connect_timer == NULL) {
+        deferred_connect_timer = xTimerCreate("defer_conn", pdMS_TO_TICKS(200), pdFALSE, (void *)0, deferred_connect_timer_callback);
+    }
+    if (deferred_connect_timer != NULL) {
+        xTimerChangePeriod(deferred_connect_timer, pdMS_TO_TICKS(200), 0);
+        xTimerStart(deferred_connect_timer, 0);
+    } else {
+        try_to_connect(best_addr);
+    }
+    ESP_LOGI(TAG, "Deferred connect to %02x:%02x:%02x:%02x:%02x:%02x",
+             best_addr[0], best_addr[1], best_addr[2], best_addr[3], best_addr[4], best_addr[5]);
+
     return ESP_OK;
 }
 
@@ -532,73 +578,90 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         trigger_scan_task();
         break;
 
-    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
+    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT: {
         ESP_LOGI(TAG, "scan stopped");
-        // After scanning ends, decide whether to connect based on reconnection mode and device discovery status
-        if (best_rssi > -128) {
-            if (!ble_get_reconnecting() || (ble_get_reconnecting() && s_found_previous_device)) {
-                try_to_connect(best_addr);
-                ESP_LOGI(TAG, "Connected to device: %02x:%02x:%02x:%02x:%02x:%02x",
-                         best_addr[0], best_addr[1], best_addr[2], best_addr[3], best_addr[4], best_addr[5]);
-            } else {
-                ESP_LOGW(TAG, "In reconnection mode but target device not found");
+        if (ble_get_reconnecting()) {
+            /* Reconnection: best_addr already set by ble_set_target_device; try connect without requiring s_found_previous_device */
+            memcpy(s_deferred_connect_addr, best_addr, sizeof(esp_bd_addr_t));
+            if (deferred_connect_timer == NULL) {
+                deferred_connect_timer = xTimerCreate("defer_conn", pdMS_TO_TICKS(200), pdFALSE, (void *)0, deferred_connect_timer_callback);
             }
+            if (deferred_connect_timer != NULL) {
+                xTimerChangePeriod(deferred_connect_timer, pdMS_TO_TICKS(200), 0);
+                xTimerStart(deferred_connect_timer, 0);
+            } else {
+                try_to_connect(best_addr);
+            }
+            ESP_LOGI(TAG, "Deferred connect to %02x:%02x:%02x:%02x:%02x:%02x",
+                     best_addr[0], best_addr[1], best_addr[2], best_addr[3], best_addr[4], best_addr[5]);
+        } else if (best_rssi > -128) {
+            memcpy(s_deferred_connect_addr, best_addr, sizeof(esp_bd_addr_t));
+            if (deferred_connect_timer == NULL) {
+                deferred_connect_timer = xTimerCreate("defer_conn", pdMS_TO_TICKS(200), pdFALSE, (void *)0, deferred_connect_timer_callback);
+            }
+            if (deferred_connect_timer != NULL) {
+                xTimerChangePeriod(deferred_connect_timer, pdMS_TO_TICKS(200), 0);
+                xTimerStart(deferred_connect_timer, 0);
+            } else {
+                try_to_connect(best_addr);
+            }
+            ESP_LOGI(TAG, "Deferred connect to %02x:%02x:%02x:%02x:%02x:%02x",
+                     best_addr[0], best_addr[1], best_addr[2], best_addr[3], best_addr[4], best_addr[5]);
         } else {
             ESP_LOGW(TAG, "No suitable device found with sufficient signal strength");
         }
         s_is_reconnecting = false;
         break;
+    }
 
     case ESP_GAP_BLE_SCAN_RESULT_EVT: {
+        ESP_LOGI(TAG, "FLOW: GAP scan result evt");
+        if (param == NULL) {
+            break;
+        }
+        /* Reconnection: do not touch param at all in callback to avoid reset */
+        if (ble_get_reconnecting()) {
+            break;
+        }
         esp_ble_gap_cb_param_t *r = param;
-        if (r->scan_rst.search_evt == ESP_GAP_SEARCH_INQ_RES_EVT) {
-            // Check if it is a DJI camera advertisement
-            if (!bsp_link_is_dji_camera_adv(r)) {
-                break;
-            }
-            // Get the complete name from the advertisement data
-            uint8_t *adv_name = NULL;
-            uint8_t adv_name_len = 0;
+        if (r->scan_rst.search_evt != ESP_GAP_SEARCH_INQ_RES_EVT) {
+            break;
+        }
+        ESP_LOGI(TAG, "FLOW: scan result inq_res, before bsp_link");
+        if (!bsp_link_is_dji_camera_adv(r)) {
+            break;
+        }
+
+        /* Normal scan: resolve name, log, and record best device */
+        uint8_t *adv_name = NULL;
+        uint8_t adv_name_len = 0;
+        uint16_t adv_total = r->scan_rst.adv_data_len + r->scan_rst.scan_rsp_len;
+        if (adv_total <= 256) {
             adv_name = esp_ble_resolve_adv_data_by_type(r->scan_rst.ble_adv,
-                                r->scan_rst.adv_data_len + r->scan_rst.scan_rsp_len,
+                                adv_total,
                                 ESP_BLE_AD_TYPE_NAME_CMPL,
                                 &adv_name_len);
-
-            // Prepare a safe string pointer for logging
-            const char *adv_name_str = NULL;
-            if (adv_name && adv_name_len > 0) {
-                static char name_buf[64];
-                size_t copy_len = adv_name_len < sizeof(name_buf) - 1 ? adv_name_len : sizeof(name_buf) - 1;
-                memcpy(name_buf, adv_name, copy_len);
-                name_buf[copy_len] = '\0';
-                adv_name_str = name_buf;
-            } else {
-                adv_name_str = "NULL";
-            }
-
-            ESP_LOGI(TAG, "Found device: %s with RSSI: %d, MAC: %02X:%02X:%02X:%02X:%02X:%02X",
-                adv_name_str,
-                r->scan_rst.rssi,
-                r->scan_rst.bda[0], r->scan_rst.bda[1], r->scan_rst.bda[2],
-                r->scan_rst.bda[3], r->scan_rst.bda[4], r->scan_rst.bda[5]);
-
-            // Compare names and record signal strength
-            if (ble_get_reconnecting()) {
-                // In reconnection mode, compare device addresses
-                if (memcmp(best_addr, r->scan_rst.bda, sizeof(esp_bd_addr_t)) == 0) {
-                    s_found_previous_device = true;
-                    best_rssi = r->scan_rst.rssi;  // Update RSSI for reconnection
-                    ESP_LOGI(TAG, "Found previous device: %s, RSSI: %d", adv_name_str, r->scan_rst.rssi);
-                }
-            } else {
-                // In normal scan mode, record the device with the strongest signal
-                if (r->scan_rst.rssi > best_rssi && r->scan_rst.rssi >= MIN_RSSI_THRESHOLD) {
-                    best_rssi = r->scan_rst.rssi;
-                    memcpy(best_addr, r->scan_rst.bda, sizeof(esp_bd_addr_t));
-                    strncpy(s_remote_device_name, adv_name_str, sizeof(s_remote_device_name) - 1);
-                    s_remote_device_name[sizeof(s_remote_device_name) - 1] = '\0';
-                }
-            }
+        }
+        if (adv_name_len > 63) {
+            adv_name_len = 63;
+        }
+        static char name_buf[64];
+        const char *adv_name_str = "NULL";
+        if (adv_name && adv_name_len > 0) {
+            memcpy(name_buf, adv_name, adv_name_len);
+            name_buf[adv_name_len] = '\0';
+            adv_name_str = name_buf;
+        }
+        ESP_LOGI(TAG, "Found device: %s with RSSI: %d, MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+            adv_name_str,
+            r->scan_rst.rssi,
+            r->scan_rst.bda[0], r->scan_rst.bda[1], r->scan_rst.bda[2],
+            r->scan_rst.bda[3], r->scan_rst.bda[4], r->scan_rst.bda[5]);
+        if (r->scan_rst.rssi > best_rssi && r->scan_rst.rssi >= MIN_RSSI_THRESHOLD) {
+            best_rssi = r->scan_rst.rssi;
+            memcpy(best_addr, r->scan_rst.bda, sizeof(esp_bd_addr_t));
+            strncpy(s_remote_device_name, adv_name_str, sizeof(s_remote_device_name) - 1);
+            s_remote_device_name[sizeof(s_remote_device_name) - 1] = '\0';
         }
         break;
     }

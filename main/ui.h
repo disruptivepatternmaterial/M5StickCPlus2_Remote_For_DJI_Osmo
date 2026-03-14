@@ -19,6 +19,7 @@ typedef enum {
     SCREEN_MODE,                // Switch camera mode
     SCREEN_SLEEP,               // Sleep mode
     SCREEN_WAKE,                // Wake camera from sleep
+    SCREEN_AUTO,                // Auto Start/Stop (motion-triggered recording status)
     SCREEN_COUNT                // Total number of screens
 } ui_screen_t;
 
@@ -45,12 +46,17 @@ typedef struct {
 extern ui_state_t g_ui_state;
 extern screen_layout_t g_layout;
 
+/** Set by UI when connect succeeds; cleared by main loop after setting Video mode. */
+extern bool g_pending_set_video_mode_after_connect;
+
 // UI Function declarations
 void ui_init(void);
 void ui_detect_device_and_set_scale(void);
 void ui_auto_connect_on_startup(void);
 int ui_attempt_background_reconnection(void);
 void ui_update_display(void);
+/** Only redraws the Auto screen status line (no full display clear). Call when on SCREEN_AUTO. */
+void ui_update_auto_status_line_only(void);
 void ui_next_screen(void);
 void ui_execute_current_screen(void);
 void ui_show_message(const char* message, uint16_t color, int duration_ms);
@@ -66,6 +72,7 @@ void ui_screen_shutter(void);
 void ui_screen_mode(void);
 void ui_screen_sleep(void);
 void ui_screen_wake(void);
+void ui_screen_auto(void);
 
 // Screen information structure
 typedef struct {
@@ -81,7 +88,8 @@ static const screen_info_t screen_info[SCREEN_COUNT] = {
     {"SHUTTER", record_icon, ICON_RED, ui_screen_shutter},
     {"MODE", mode_icon, ICON_ORANGE, ui_screen_mode},
     {"SLEEP", sleep_icon, ICON_CYAN, ui_screen_sleep},
-    {"WAKE", key_icon, ICON_YELLOW, ui_screen_wake}
+    {"WAKE", key_icon, ICON_YELLOW, ui_screen_wake},
+    {"AUTO START/STOP", record_icon, ICON_GREEN, ui_screen_auto}
 };
 
 #endif // UI_H
