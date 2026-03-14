@@ -24,6 +24,9 @@
 #include "esp_log.h"
 #include "driver/gpio.h"
 
+#include "nvs_flash.h"
+#include "esp_system.h"
+#include "esp_partition.h"
 #include "connect_logic.h"
 #include "command_logic.h"
 #include "light_logic.h"
@@ -88,6 +91,42 @@ void app_main(void) {
         return;
     }
     ESP_LOGI(TAG, "Light logic initialized");
+
+    /* If the previous boot crashed, the phy_init partition may contain a
+     * partially-written or corrupted calibration record.  On the next boot
+     * phy_init detects the checksum failure, attempts to rewrite calibration,
+     * and crashes again — producing an unrecoverable boot loop.  Erase the
+     * phy_init partition now so the BLE stack starts fresh. */
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    if (reset_reason == ESP_RST_PANIC    ||
+        reset_reason == ESP_RST_INT_WDT  ||
+        reset_reason == ESP_RST_TASK_WDT ||
+        reset_reason == ESP_RST_WDT) {
+        ESP_LOGW(TAG, "Previous boot crashed (reason=%d) — erasing PHY calibration partition", (int)reset_reason);
+        const esp_partition_t *phy_part = esp_partition_find_first(
+            ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_PHY, NULL);
+        if (phy_part != NULL) {
+            esp_err_t erase_err = esp_partition_erase_range(phy_part, 0, phy_part->size);
+            if (erase_err == ESP_OK) {
+                ESP_LOGW(TAG, "PHY partition erased — rebooting for fresh BLE calibration");
+                esp_restart();
+            } else {
+                ESP_LOGE(TAG, "PHY partition erase failed: %s", esp_err_to_name(erase_err));
+            }
+        }
+    }
+
+    /* Initialize NVS before BLE — the ESP32 BLE stack requires NVS for PHY
+     * calibration data storage.  Erase and reinit if the partition is corrupted. */
+    esp_err_t nvs_ret = nvs_flash_init();
+    if (nvs_ret == ESP_ERR_NVS_NO_FREE_PAGES || nvs_ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_LOGW(TAG, "NVS corrupted, erasing and reinitializing");
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_ret = nvs_flash_init();
+    }
+    if (nvs_ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(nvs_ret));
+    }
 
     /* Initialize Bluetooth Low Energy subsystem
      * Configures ESP32 BLE stack for DJI camera communication

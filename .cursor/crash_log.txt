@@ -1,0 +1,429 @@
+[0;32mI (3107) gpio: GPIO[35]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3107) gpio: GPIO[37]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3115) gpio: GPIO[39]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3124) M5STICKC_HAL: Buttons initialized - A=37, B=39, PWR=35[0m
+[0;32mI (3141) M5STICKC_HAL: MPU6886 initialized (WHO_AM_I=0x19, ±8g range)[0m
+[0;32mI (3141) M5STICKC_HAL: M5StickC Plus2 hardware initialized successfully[0m
+[0;32mI (3145) MAIN: M5StickC Plus2 hardware initialized[0m
+[0;32mI (3152) gpio: GPIO[10]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (3161) LOGIC_LIGHT: RGB LED initialized[0m
+[0;32mI (3165) LOGIC_LIGHT: LED state timer started successfully[0m
+[0;32mI (3171) LOGIC_LIGHT: LED blink timer started successfully[0m
+[0;32mI (3177) MAIN: Light logic initialized[0m
+[0;32mI (3190) MAIN: Initializing Bluetooth...[0m
+[0;32mI (3191) BLE: ble_init: start[0m
+[0;32mI (3192) BTDM_INIT: BT controller compile version [bc393dd][0m
+[0;32mI (3197) BTDM_INIT: Bluetooth MAC: 0c:8b:95:a8:37:36[0m
+[0;32mI (3203) BLE: ble_init: enabling controller...[0m
+[0;32mI (3207) phy_init: phy_version 4840,02e0d70,Sep  2 2024,19:39:07[0m
+[0;33mW (3281) phy_init: saving new calibration data because of checksum failure, mode(0)[0m
+[0;32mI (13) boot: ESP-IDF 5.1.4.241008 2nd stage bootloader[0m
+[0;32mI (13) boot: compile time Mar 13 2026 20:41:02[0m
+[0;32mI (13) boot: Multicore bootloader[0m
+[0;32mI (17) boot: chip revision: v1.0[0m
+[0;32mI (21) boot.esp32: SPI Speed      : 40MHz[0m
+[0;32mI (25) boot.esp32: SPI Mode       : DIO[0m
+[0;32mI (30) boot.esp32: SPI Flash Size : 4MB[0m
+[0;32mI (34) boot: Enabling RNG early entropy source...[0m
+[0;32mI (40) boot: Partition Table:[0m
+[0;32mI (43) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (51) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (58) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (66) boot:  2 factory          factory app      00 00 00010000 00100000[0m
+[0;32mI (73) boot: End of partition table[0m
+[0;32mI (77) esp_image: segment 0: paddr=00010020 vaddr=3f400020 size=2eadch (191196) map[0m
+[0;32mI (155) esp_image: segment 1: paddr=0003eb04 vaddr=3ffbdb60 size=01514h (  5396) load[0m
+[0;32mI (157) esp_image: segment 2: paddr=00040020 vaddr=400d0020 size=8d380h (578432) map[0m
+[0;32mI (369) esp_image: segment 3: paddr=000cd3a8 vaddr=3ffbf074 size=03648h ( 13896) load[0m
+[0;32mI (375) esp_image: segment 4: paddr=000d09f8 vaddr=40080000 size=1a8d4h (108756) load[0m
+[0;32mI (434) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (434) boot: Disabling RNG early entropy source...[0m
+[0;32mI (446) cpu_start: Multicore app[0m
+[0;32mI (447) cpu_start: Pro cpu up.[0m
+[0;32mI (447) cpu_start: Starting app cpu, entry point is 0x400843e8[0m
+[0;32mI (0) cpu_start: App cpu up.[0m
+[0;32mI (464) cpu_start: Pro cpu start user code[0m
+[0;32mI (464) cpu_start: cpu freq: 240000000 Hz[0m
+[0;32mI (464) cpu_start: Application information:[0m
+[0;32mI (469) cpu_start: Project name:     dji_camera_bluetooth_control[0m
+[0;32mI (475) cpu_start: App version:      296889d-dirty[0m
+[0;32mI (481) cpu_start: Compile time:     Mar 13 2026 20:40:55[0m
+[0;32mI (487) cpu_start: ELF file SHA256:  0ce2146f6504fc1a...[0m
+[0;32mI (493) cpu_start: ESP-IDF:          5.1.4.241008[0m
+[0;32mI (498) cpu_start: Min chip rev:     v0.0[0m
+[0;32mI (503) cpu_start: Max chip rev:     v3.99 [0m
+[0;32mI (508) cpu_start: Chip rev:         v1.0[0m
+[0;32mI (513) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (520) heap_init: At 3FFAFF10 len 000000F0 (0 KiB): DRAM[0m
+[0;32mI (526) heap_init: At 3FFB6388 len 00001C78 (7 KiB): DRAM[0m
+[0;32mI (532) heap_init: At 3FFB9A20 len 00004108 (16 KiB): DRAM[0m
+[0;32mI (538) heap_init: At 3FFC75B8 len 00018A48 (98 KiB): DRAM[0m
+[0;32mI (544) heap_init: At 3FFE0440 len 00003AE0 (14 KiB): D/IRAM[0m
+[0;32mI (551) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM[0m
+[0;32mI (557) heap_init: At 4009A8D4 len 0000572C (21 KiB): IRAM[0m
+[0;32mI (565) spi_flash: detected chip: gd[0m
+[0;32mI (567) spi_flash: flash io: dio[0m
+[0;32mI (583) coexist: coex firmware version: 27d8387[0m
+[0;32mI (584) app_start: Starting scheduler on CPU0[0m
+[0;32mI (58[0;32mI (584) app_start: Starting scheduler on CPU1[0m
+4) main_task: Started on CPU0[0m
+[0;32mI (593) main_task: Calling app_main()[0m
+[0;32mI (596) M5STICKC_HAL: Initializing M5StickC Plus2 hardware[0m
+[0;32mI (603) M5STICKC_HAL: Initializing power management for M5StickC Plus2[0m
+[0;32mI (610) gpio: GPIO[4]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (619) M5STICKC_HAL: Power hold enabled on GPIO 4[0m
+[0;32mI (624) gpio: GPIO[27]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (634) M5STICKC_HAL: Power management initialized - PWR_EN=4, BL=27[0m
+[0;32mI (641) M5STICKC_HAL: I2C initialized on SDA=21, SCL=22[0m
+[0;32mI (646) M5STICKC_HAL: AXP192: powering on display (LDO2=backlight, LDO3=logic)[0m
+[0;32mI (655) M5STICKC_HAL: AXP192: reg12 0x13 → 0x1F[0m
+[0;32mI (660) M5STICKC_HAL: AXP192: display power on complete[0m
+[0;32mI (665) M5STICKC_HAL: Display init - Step 1: GPIO initialization only[0m
+[0;32mI (672) M5STICKC_HAL: Pins: MOSI=15, SCLK=13, CS=5, DC=23, RST=18, BL=27[0m
+[0;32mI (680) M5STICKC_HAL: Configuring display control GPIOs...[0m
+[0;32mI (686) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (695) M5STICKC_HAL: RST pin configured[0m
+[0;32mI (700) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (709) M5STICKC_HAL: DC pin configured[0m
+[0;32mI (713) gpio: GPIO[5]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (723) M5STICKC_HAL: CS pin configured and set high[0m
+[0;32mI (728) M5STICKC_HAL: Performing display reset sequence...[0m
+[0;32mI (754) M5STICKC_HAL: Display reset complete[0m
+[0;32mI (754) M5STICKC_HAL: Step 2: Initializing SPI bus...[0m
+[0;32mI (754) M5STICKC_HAL: SPI bus initialized on VSPI_HOST[0m
+[0;32mI (759) M5STICKC_HAL: Step 3: Creating LCD panel IO...[0m
+[0;32mI (766) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (774) M5STICKC_HAL: LCD panel IO created[0m
+[0;32mI (779) M5STICKC_HAL: Step 4: Creating ST7789 panel...[0m
+[0;32mI (784) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (794) M5STICKC_HAL: ST7789 panel created[0m
+[0;32mI (798) M5STICKC_HAL: Step 5: Initializing panel...[0m
+[0;32mI (924) M5STICKC_HAL: Panel initialized[0m
+[0;32mI (924) M5STICKC_HAL: Step 6: Configuring display settings...[0m
+[0;32mI (924) M5STICKC_HAL: Display initialization complete![0m
+[0;32mI (3107) gpio: GPIO[35]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3107) gpio: GPIO[37]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3115) gpio: GPIO[39]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3124) M5STICKC_HAL: Buttons initialized - A=37, B=39, PWR=35[0m
+[0;32mI (3141) M5STICKC_HAL: MPU6886 initialized (WHO_AM_I=0x19, ±8g range)[0m
+[0;32mI (3141) M5STICKC_HAL: M5StickC Plus2 hardware initialized successfully[0m
+[0;32mI (3145) MAIN: M5StickC Plus2 hardware initialized[0m
+[0;32mI (3152) gpio: GPIO[10]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (3161) LOGIC_LIGHT: RGB LED initialized[0m
+[0;32mI (3165) LOGIC_LIGHT: LED state timer started successfully[0m
+[0;32mI (3171) LOGIC_LIGHT: LED blink timer started successfully[0m
+[0;32mI (3177) MAIN: Light logic initialized[0m
+[0;32mI (3190) MAIN: Initializing Bluetooth...[0m
+[0;32mI (3190) BLE: ble_init: start[0m
+[0;32mI (3191) BTDM_INIT: BT controller compile version [bc393dd][0m
+[0;32mI (3197) BTDM_INIT: Bluetooth MAC: 0c:8b:95:a8:37:36[0m
+[0;32mI (3203) BLE: ble_init: enabling controller...[0m
+[0;32mI (3207) phy_init: phy_version 4840,02e0d70,Sep  2 2024,19:39:07[0m
+[0;32mI (13) boot: ESP-IDF 5.1.4.241008 2nd stage bootloader[0m
+[0;32mI (13) boot: compile time Mar 13 2026 20:41:02[0m
+[0;32mI (13) boot: Multicore bootloader[0m
+[0;32mI (17) boot: chip revision: v1.0[0m
+[0;32mI (21) boot.esp32: SPI Speed      : 40MHz[0m
+[0;32mI (25) boot.esp32: SPI Mode       : DIO[0m
+[0;32mI (30) boot.esp32: SPI Flash Size : 4MB[0m
+[0;32mI (34) boot: Enabling RNG early entropy source...[0m
+[0;32mI (40) boot: Partition Table:[0m
+[0;32mI (43) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (51) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (58) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (66) boot:  2 factory          factory app      00 00 00010000 00100000[0m
+[0;32mI (73) boot: End of partition table[0m
+[0;32mI (77) esp_image: segment 0: paddr=00010020 vaddr=3f400020 size=2eadch (191196) map[0m
+[0;32mI (155) esp_image: segment 1: paddr=0003eb04 vaddr=3ffbdb60 size=01514h (  5396) load[0m
+[0;32mI (157) esp_image: segment 2: paddr=00040020 vaddr=400d0020 size=8d380h (578432) map[0m
+[0;32mI (369) esp_image: segment 3: paddr=000cd3a8 vaddr=3ffbf074 size=03648h ( 13896) load[0m
+[0;32mI (375) esp_image: segment 4: paddr=000d09f8 vaddr=40080000 size=1a8d4h (108756) load[0m
+[0;32mI (434) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (434) boot: Disabling RNG early entropy source...[0m
+[0;32mI (446) cpu_start: Multicore app[0m
+[0;32mI (447) cpu_start: Pro cpu up.[0m
+[0;32mI (447) cpu_start: Starting app cpu, entry point is 0x400843e8[0m
+[0;32mI (0) cpu_start: App cpu up.[0m
+[0;32mI (464) cpu_start: Pro cpu start user code[0m
+[0;32mI (464) cpu_start: cpu freq: 240000000 Hz[0m
+[0;32mI (464) cpu_start: Application information:[0m
+[0;32mI (469) cpu_start: Project name:     dji_camera_bluetooth_control[0m
+[0;32mI (475) cpu_start: App version:      296889d-dirty[0m
+[0;32mI (481) cpu_start: Compile time:     Mar 13 2026 20:40:55[0m
+[0;32mI (487) cpu_start: ELF file SHA256:  0ce2146f6504fc1a...[0m
+[0;32mI (493) cpu_start: ESP-IDF:          5.1.4.241008[0m
+[0;32mI (498) cpu_start: Min chip rev:     v0.0[0m
+[0;32mI (503) cpu_start: Max chip rev:     v3.99 [0m
+[0;32mI (508) cpu_start: Chip rev:         v1.0[0m
+[0;32mI (513) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (520) heap_init: At 3FFAFF10 len 000000F0 (0 KiB): DRAM[0m
+[0;32mI (526) heap_init: At 3FFB6388 len 00001C78 (7 KiB): DRAM[0m
+[0;32mI (532) heap_init: At 3FFB9A20 len 00004108 (16 KiB): DRAM[0m
+[0;32mI (538) heap_init: At 3FFC75B8 len 00018A48 (98 KiB): DRAM[0m
+[0;32mI (544) heap_init: At 3FFE0440 len 00003AE0 (14 KiB): D/IRAM[0m
+[0;32mI (551) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM[0m
+[0;32mI (557) heap_init: At 4009A8D4 len 0000572C (21 KiB): IRAM[0m
+[0;32mI (565) spi_flash: detected chip: gd[0m
+[0;32mI (567) spi_flash: flash io: dio[0m
+[0;32mI (583) coexist: coex firmware version: 27d8387[0m
+[0;32mI (584) app_start: Starting scheduler on CPU0[0m
+[0;32mI (58[0;32mI (584) app_start: Starting scheduler on CPU1[0m
+4) main_task: Started on CPU0[0m
+[0;32mI (593) main_task: Calling app_main()[0m
+[0;32mI (596) M5STICKC_HAL: Initializing M5StickC Plus2 hardware[0m
+[0;32mI (603) M5STICKC_HAL: Initializing power management for M5StickC Plus2[0m
+[0;32mI (610) gpio: GPIO[4]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (619) M5STICKC_HAL: Power hold enabled on GPIO 4[0m
+[0;32mI (624) gpio: GPIO[27]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (634) M5STICKC_HAL: Power management initialized - PWR_EN=4, BL=27[0m
+[0;32mI (641) M5STICKC_HAL: I2C initialized on SDA=21, SCL=22[0m
+[0;32mI (646) M5STICKC_HAL: AXP192: powering on display (LDO2=backlight, LDO3=logic)[0m
+[0;32mI (655) M5STICKC_HAL: AXP192: reg12 0x13 → 0x1F[0m
+[0;32mI (660) M5STICKC_HAL: AXP192: display power on complete[0m
+[0;32mI (665) M5STICKC_HAL: Display init - Step 1: GPIO initialization only[0m
+[0;32mI (672) M5STICKC_HAL: Pins: MOSI=15, SCLK=13, CS=5, DC=23, RST=18, BL=27[0m
+[0;32mI (680) M5STICKC_HAL: Configuring display control GPIOs...[0m
+[0;32mI (686) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (695) M5STICKC_HAL: RST pin configured[0m
+[0;32mI (700) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (709) M5STICKC_HAL: DC pin configured[0m
+[0;32mI (713) gpio: GPIO[5]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (723) M5STICKC_HAL: CS pin configured and set high[0m
+[0;32mI (728) M5STICKC_HAL: Performing display reset sequence...[0m
+[0;32mI (754) M5STICKC_HAL: Display reset complete[0m
+[0;32mI (754) M5STICKC_HAL: Step 2: Initializing SPI bus...[0m
+[0;32mI (754) M5STICKC_HAL: SPI bus initialized on VSPI_HOST[0m
+[0;32mI (759) M5STICKC_HAL: Step 3: Creating LCD panel IO...[0m
+[0;32mI (766) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (774) M5STICKC_HAL: LCD panel IO created[0m
+[0;32mI (779) M5STICKC_HAL: Step 4: Creating ST7789 panel...[0m
+[0;32mI (784) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (794) M5STICKC_HAL: ST7789 panel created[0m
+[0;32mI (798) M5STICKC_HAL: Step 5: Initializing panel...[0m
+[0;32mI (924) M5STICKC_HAL: Panel initialized[0m
+[0;32mI (924) M5STICKC_HAL: Step 6: Configuring display settings...[0m
+[0;32mI (924) M5STICKC_HAL: Display initialization complete![0m
+[0;32mI (3107) gpio: GPIO[35]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3107) gpio: GPIO[37]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3115) gpio: GPIO[39]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3124) M5STICKC_HAL: Buttons initialized - A=37, B=39, PWR=35[0m
+[0;32mI (3141) M5STICKC_HAL: MPU6886 initialized (WHO_AM_I=0x19, ±8g range)[0m
+[0;32mI (3141) M5STICKC_HAL: M5StickC Plus2 hardware initialized successfully[0m
+[0;32mI (3145) MAIN: M5StickC Plus2 hardware initialized[0m
+[0;32mI (3152) gpio: GPIO[10]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (3161) LOGIC_LIGHT: RGB LED initialized[0m
+[0;32mI (3165) LOGIC_LIGHT: LED state timer started successfully[0m
+[0;32mI (3171) LOGIC_LIGHT: LED blink timer started successfully[0m
+[0;32mI (3177) MAIN: Light logic initialized[0m
+[0;32mI (3190) MAIN: Initializing Bluetooth...[0m
+[0;32mI (3190) BLE: ble_init: start[0m
+[0;32mI (3191) BTDM_INIT: BT controller compile version [bc393dd][0m
+[0;32mI (3197) BTDM_INIT: Bluetooth MAC: 0c:8b:95:a8:37:36[0m
+[0;32mI (3203) BLE: ble_init: enabling controller...[0m
+[0;32mI (3207) phy_init: phy_version 4840,02e0d70,Sep  2 2024,19:39:07[0m
+[0;33mW (3296) phy_init: saving new calibration data because of checksum failure, mode(0)[0m
+[0;32mI (13) boot: ESP-IDF 5.1.4.241008 2nd stage bootloader[0m
+[0;32mI (13) boot: compile time Mar 13 2026 20:41:02[0m
+[0;32mI (13) boot: Multicore bootloader[0m
+[0;32mI (17) boot: chip revision: v1.0[0m
+[0;32mI (21) boot.esp32: SPI Speed      : 40MHz[0m
+[0;32mI (25) boot.esp32: SPI Mode       : DIO[0m
+[0;32mI (30) boot.esp32: SPI Flash Size : 4MB[0m
+[0;32mI (34) boot: Enabling RNG early entropy source...[0m
+[0;32mI (40) boot: Partition Table:[0m
+[0;32mI (43) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (51) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (58) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (66) boot:  2 factory          factory app      00 00 00010000 00100000[0m
+[0;32mI (73) boot: End of partition table[0m
+[0;32mI (77) esp_image: segment 0: paddr=00010020 vaddr=3f400020 size=2eadch (191196) map[0m
+[0;32mI (155) esp_image: segment 1: paddr=0003eb04 vaddr=3ffbdb60 size=01514h (  5396) load[0m
+[0;32mI (157) esp_image: segment 2: paddr=00040020 vaddr=400d0020 size=8d380h (578432) map[0m
+[0;32mI (369) esp_image: segment 3: paddr=000cd3a8 vaddr=3ffbf074 size=03648h ( 13896) load[0m
+[0;32mI (375) esp_image: segment 4: paddr=000d09f8 vaddr=40080000 size=1a8d4h (108756) load[0m
+[0;32mI (434) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (434) boot: Disabling RNG early entropy source...[0m
+[0;32mI (446) cpu_start: Multicore app[0m
+[0;32mI (447) cpu_start: Pro cpu up.[0m
+[0;32mI (447) cpu_start: Starting app cpu, entry point is 0x400843e8[0m
+[0;32mI (0) cpu_start: App cpu up.[0m
+[0;32mI (464) cpu_start: Pro cpu start user code[0m
+[0;32mI (464) cpu_start: cpu freq: 240000000 Hz[0m
+[0;32mI (464) cpu_start: Application information:[0m
+[0;32mI (469) cpu_start: Project name:     dji_camera_bluetooth_control[0m
+[0;32mI (475) cpu_start: App version:      296889d-dirty[0m
+[0;32mI (481) cpu_start: Compile time:     Mar 13 2026 20:40:55[0m
+[0;32mI (487) cpu_start: ELF file SHA256:  0ce2146f6504fc1a...[0m
+[0;32mI (493) cpu_start: ESP-IDF:          5.1.4.241008[0m
+[0;32mI (498) cpu_start: Min chip rev:     v0.0[0m
+[0;32mI (503) cpu_start: Max chip rev:     v3.99 [0m
+[0;32mI (508) cpu_start: Chip rev:         v1.0[0m
+[0;32mI (513) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (520) heap_init: At 3FFAFF10 len 000000F0 (0 KiB): DRAM[0m
+[0;32mI (526) heap_init: At 3FFB6388 len 00001C78 (7 KiB): DRAM[0m
+[0;32mI (532) heap_init: At 3FFB9A20 len 00004108 (16 KiB): DRAM[0m
+[0;32mI (538) heap_init: At 3FFC75B8 len 00018A48 (98 KiB): DRAM[0m
+[0;32mI (544) heap_init: At 3FFE0440 len 00003AE0 (14 KiB): D/IRAM[0m
+[0;32mI (551) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM[0m
+[0;32mI (557) heap_init: At 4009A8D4 len 0000572C (21 KiB): IRAM[0m
+[0;32mI (565) spi_flash: detected chip: gd[0m
+[0;32mI (567) spi_flash: flash io: dio[0m
+[0;32mI (583) coexist: coex firmware version: 27d8387[0m
+[0;32mI (584) app_start: Starting scheduler on CPU0[0m
+[0;32mI (58[0;32mI (584) app_start: Starting scheduler on CPU1[0m
+4) main_task: Started on CPU0[0m
+[0;32mI (593) main_task: Calling app_main()[0m
+[0;32mI (596) M5STICKC_HAL: Initializing M5StickC Plus2 hardware[0m
+[0;32mI (603) M5STICKC_HAL: Initializing power management for M5StickC Plus2[0m
+[0;32mI (610) gpio: GPIO[4]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (619) M5STICKC_HAL: Power hold enabled on GPIO 4[0m
+[0;32mI (624) gpio: GPIO[27]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (634) M5STICKC_HAL: Power management initialized - PWR_EN=4, BL=27[0m
+[0;32mI (641) M5STICKC_HAL: I2C initialized on SDA=21, SCL=22[0m
+[0;32mI (646) M5STICKC_HAL: AXP192: powering on display (LDO2=backlight, LDO3=logic)[0m
+[0;32mI (655) M5STICKC_HAL: AXP192: reg12 0x13 → 0x1F[0m
+[0;32mI (660) M5STICKC_HAL: AXP192: display power on complete[0m
+[0;32mI (665) M5STICKC_HAL: Display init - Step 1: GPIO initialization only[0m
+[0;32mI (672) M5STICKC_HAL: Pins: MOSI=15, SCLK=13, CS=5, DC=23, RST=18, BL=27[0m
+[0;32mI (680) M5STICKC_HAL: Configuring display control GPIOs...[0m
+[0;32mI (686) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (695) M5STICKC_HAL: RST pin configured[0m
+[0;32mI (700) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (709) M5STICKC_HAL: DC pin configured[0m
+[0;32mI (713) gpio: GPIO[5]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (723) M5STICKC_HAL: CS pin configured and set high[0m
+[0;32mI (728) M5STICKC_HAL: Performing display reset sequence...[0m
+[0;32mI (754) M5STICKC_HAL: Display reset complete[0m
+[0;32mI (754) M5STICKC_HAL: Step 2: Initializing SPI bus...[0m
+[0;32mI (754) M5STICKC_HAL: SPI bus initialized on VSPI_HOST[0m
+[0;32mI (759) M5STICKC_HAL: Step 3: Creating LCD panel IO...[0m
+[0;32mI (766) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (774) M5STICKC_HAL: LCD panel IO created[0m
+[0;32mI (779) M5STICKC_HAL: Step 4: Creating ST7789 panel...[0m
+[0;32mI (784) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (794) M5STICKC_HAL: ST7789 panel created[0m
+[0;32mI (798) M5STICKC_HAL: Step 5: Initializing panel...[0m
+[0;32mI (924) M5STICKC_HAL: Panel initialized[0m
+[0;32mI (924) M5STICKC_HAL: Step 6: Configuring display settings...[0m
+[0;32mI (924) M5STICKC_HAL: Display initialization complete![0m
+[0;32mI (3107) gpio: GPIO[35]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3107) gpio: GPIO[37]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3115) gpio: GPIO[39]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3124) M5STICKC_HAL: Buttons initialized - A=37, B=39, PWR=35[0m
+[0;32mI (3141) M5STICKC_HAL: MPU6886 initialized (WHO_AM_I=0x19, ±8g range)[0m
+[0;32mI (3141) M5STICKC_HAL: M5StickC Plus2 hardware initialized successfully[0m
+[0;32mI (3145) MAIN: M5StickC Plus2 hardware initialized[0m
+[0;32mI (3152) gpio: GPIO[10]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (3161) LOGIC_LIGHT: RGB LED initialized[0m
+[0;32mI (3165) LOGIC_LIGHT: LED state timer started successfully[0m
+[0;32mI (3171) LOGIC_LIGHT: LED blink timer started successfully[0m
+[0;32mI (3177) MAIN: Light logic initialized[0m
+[0;32mI (3190) MAIN: Initializing Bluetooth...[0m
+[0;32mI (3191) BLE: ble_init: start[0m
+[0;32mI (3191) BTDM_INIT: BT controller compile version [bc393dd][0m
+[0;32mI (3197) BTDM_INIT: Bluetooth MAC: 0c:8b:95:a8:37:36[0m
+[0;32mI (3203) BLE: ble_init: enabling controller...[0m
+[0;32mI (3207) phy_init: phy_version 4840,02e0d70,Sep  2 2024,19:39:07[0m
+[0;32mI (13) boot: ESP-IDF 5.1.4.241008 2nd stage bootloader[0m
+[0;32mI (13) boot: compile time Mar 13 2026 20:41:02[0m
+[0;32mI (13) boot: Multicore bootloader[0m
+[0;32mI (17) boot: chip revision: v1.0[0m
+[0;32mI (21) boot.esp32: SPI Speed      : 40MHz[0m
+[0;32mI (25) boot.esp32: SPI Mode       : DIO[0m
+[0;32mI (30) boot.esp32: SPI Flash Size : 4MB[0m
+[0;32mI (34) boot: Enabling RNG early entropy source...[0m
+[0;32mI (40) boot: Partition Table:[0m
+[0;32mI (43) boot: ## Label            Usage          Type ST Offset   Length[0m
+[0;32mI (51) boot:  0 nvs              WiFi data        01 02 00009000 00006000[0m
+[0;32mI (58) boot:  1 phy_init         RF data          01 01 0000f000 00001000[0m
+[0;32mI (66) boot:  2 factory          factory app      00 00 00010000 00100000[0m
+[0;32mI (73) boot: End of partition table[0m
+[0;32mI (77) esp_image: segment 0: paddr=00010020 vaddr=3f400020 size=2eadch (191196) map[0m
+[0;32mI (155) esp_image: segment 1: paddr=0003eb04 vaddr=3ffbdb60 size=01514h (  5396) load[0m
+[0;32mI (157) esp_image: segment 2: paddr=00040020 vaddr=400d0020 size=8d380h (578432) map[0m
+[0;32mI (369) esp_image: segment 3: paddr=000cd3a8 vaddr=3ffbf074 size=03648h ( 13896) load[0m
+[0;32mI (375) esp_image: segment 4: paddr=000d09f8 vaddr=40080000 size=1a8d4h (108756) load[0m
+[0;32mI (434) boot: Loaded app from partition at offset 0x10000[0m
+[0;32mI (434) boot: Disabling RNG early entropy source...[0m
+[0;32mI (445) cpu_start: Multicore app[0m
+[0;32mI (447) cpu_start: Pro cpu up.[0m
+[0;32mI (447) cpu_start: Starting app cpu, entry point is 0x400843e8[0m
+[0;32mI (0) cpu_start: App cpu up.[0m
+[0;32mI (464) cpu_start: Pro cpu start user code[0m
+[0;32mI (464) cpu_start: cpu freq: 240000000 Hz[0m
+[0;32mI (464) cpu_start: Application information:[0m
+[0;32mI (469) cpu_start: Project name:     dji_camera_bluetooth_control[0m
+[0;32mI (475) cpu_start: App version:      296889d-dirty[0m
+[0;32mI (481) cpu_start: Compile time:     Mar 13 2026 20:40:55[0m
+[0;32mI (487) cpu_start: ELF file SHA256:  0ce2146f6504fc1a...[0m
+[0;32mI (493) cpu_start: ESP-IDF:          5.1.4.241008[0m
+[0;32mI (498) cpu_start: Min chip rev:     v0.0[0m
+[0;32mI (503) cpu_start: Max chip rev:     v3.99 [0m
+[0;32mI (508) cpu_start: Chip rev:         v1.0[0m
+[0;32mI (513) heap_init: Initializing. RAM available for dynamic allocation:[0m
+[0;32mI (520) heap_init: At 3FFAFF10 len 000000F0 (0 KiB): DRAM[0m
+[0;32mI (526) heap_init: At 3FFB6388 len 00001C78 (7 KiB): DRAM[0m
+[0;32mI (532) heap_init: At 3FFB9A20 len 00004108 (16 KiB): DRAM[0m
+[0;32mI (538) heap_init: At 3FFC75B8 len 00018A48 (98 KiB): DRAM[0m
+[0;32mI (544) heap_init: At 3FFE0440 len 00003AE0 (14 KiB): D/IRAM[0m
+[0;32mI (551) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM[0m
+[0;32mI (557) heap_init: At 4009A8D4 len 0000572C (21 KiB): IRAM[0m
+[0;32mI (565) spi_flash: detected chip: gd[0m
+[0;32mI (567) spi_flash: flash io: dio[0m
+[0;32mI (583) coexist: coex firmware version: 27d8387[0m
+[0;32mI (584) app_start: Starting scheduler on CPU0[0m
+[0;32mI (58[0;32mI (584) app_start: Starting scheduler on CPU1[0m
+4) main_task: Started on CPU0[0m
+[0;32mI (593) main_task: Calling app_main()[0m
+[0;32mI (596) M5STICKC_HAL: Initializing M5StickC Plus2 hardware[0m
+[0;32mI (603) M5STICKC_HAL: Initializing power management for M5StickC Plus2[0m
+[0;32mI (610) gpio: GPIO[4]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (619) M5STICKC_HAL: Power hold enabled on GPIO 4[0m
+[0;32mI (624) gpio: GPIO[27]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (634) M5STICKC_HAL: Power management initialized - PWR_EN=4, BL=27[0m
+[0;32mI (641) M5STICKC_HAL: I2C initialized on SDA=21, SCL=22[0m
+[0;32mI (646) M5STICKC_HAL: AXP192: powering on display (LDO2=backlight, LDO3=logic)[0m
+[0;32mI (655) M5STICKC_HAL: AXP192: reg12 0x13 → 0x1F[0m
+[0;32mI (660) M5STICKC_HAL: AXP192: display power on complete[0m
+[0;32mI (665) M5STICKC_HAL: Display init - Step 1: GPIO initialization only[0m
+[0;32mI (672) M5STICKC_HAL: Pins: MOSI=15, SCLK=13, CS=5, DC=23, RST=18, BL=27[0m
+[0;32mI (680) M5STICKC_HAL: Configuring display control GPIOs...[0m
+[0;32mI (686) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (695) M5STICKC_HAL: RST pin configured[0m
+[0;32mI (700) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (709) M5STICKC_HAL: DC pin configured[0m
+[0;32mI (713) gpio: GPIO[5]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (723) M5STICKC_HAL: CS pin configured and set high[0m
+[0;32mI (728) M5STICKC_HAL: Performing display reset sequence...[0m
+[0;32mI (754) M5STICKC_HAL: Display reset complete[0m
+[0;32mI (754) M5STICKC_HAL: Step 2: Initializing SPI bus...[0m
+[0;32mI (754) M5STICKC_HAL: SPI bus initialized on VSPI_HOST[0m
+[0;32mI (759) M5STICKC_HAL: Step 3: Creating LCD panel IO...[0m
+[0;32mI (766) gpio: GPIO[23]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (774) M5STICKC_HAL: LCD panel IO created[0m
+[0;32mI (779) M5STICKC_HAL: Step 4: Creating ST7789 panel...[0m
+[0;32mI (784) gpio: GPIO[18]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (794) M5STICKC_HAL: ST7789 panel created[0m
+[0;32mI (798) M5STICKC_HAL: Step 5: Initializing panel...[0m
+[0;32mI (924) M5STICKC_HAL: Panel initialized[0m
+[0;32mI (924) M5STICKC_HAL: Step 6: Configuring display settings...[0m
+[0;32mI (924) M5STICKC_HAL: Display initialization complete![0m
+[0;32mI (3107) gpio: GPIO[35]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3107) gpio: GPIO[37]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3115) gpio: GPIO[39]| InputEn: 1| OutputEn: 0| OpenDrain: 0| Pullup: 0| Pulldown: 0| Intr:0 [0m
+[0;32mI (3124) M5STICKC_HAL: Buttons initialized - A=37, B=39, PWR=35[0m
+[0;32mI (3141) M5STICKC_HAL: MPU6886 initialized (WHO_AM_I=0x19, ±8g range)[0m
+[0;32mI (3141) M5STICKC_HAL: M5StickC Plus2 hardware initialized successfully[0m
+[0;32mI (3145) MAIN: M5StickC Plus2 hardware initialized[0m
+[0;32mI (3152) gpio: GPIO[10]| InputEn: 0| OutputEn: 1| OpenDrain: 0| Pullup: 1| Pulldown: 0| Intr:0 [0m
+[0;32mI (3161) LOGIC_LIGHT: RGB LED initialized[0m
+[0;32mI (3165) LOGIC_LIGHT: LED state timer started successfully[0m
+[0;32mI (3171) LOGIC_LIGHT: LED blink timer started successfully[0m
+[0;32mI (3177) MAIN: Light logic initialized[0m
+[0;32mI (3190) MAIN: Initializing Bluetooth...[0m
+[0;32mI (3191) BLE: ble_init: start[0m
+[0;32mI (3191) BTDM_INIT: BT controller compile version [bc393dd][0m
+[0;32mI (3197) BTDM_INIT: Bluetooth MAC: 0c:8b:95:a8:37:36[0m
+[0;32mI (3203) BLE: ble_init: enabling controller...[0m
+[0;32mI (3207) phy_init: phy_version 4840,02e0d70,Sep  2 2024,19:39:07[0m
+[0;32mI (13) boot: ESP-IDF 5.1.4.241008 2nd stage bootloader[0m

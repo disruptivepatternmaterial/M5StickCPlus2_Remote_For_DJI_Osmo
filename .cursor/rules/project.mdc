@@ -1,0 +1,140 @@
+---
+alwaysApply: true
+description: Master project rules for M5StickC Plus DJI Osmo remote firmware
+---
+
+# Project Rules (AUTHORITATIVE)
+
+This file is the single source of truth for AI agent behaviour in this repo.
+If anything conflicts with SPEC.md, SPEC.md wins for feature requirements;
+this file wins for workflow and tooling.
+
+---
+
+## 1. Framework — ESP-IDF ONLY
+
+- **ESP-IDF v5.x** via PlatformIO (`framework = espidf`).
+- **NEVER** generate or suggest: Arduino, M5Stack Arduino libs, `M5.begin()`,
+  `M5.Lcd`, `M5.IMU`, `TFT_eSPI`, Arduino BLE libraries, or any Arduino API.
+- If you catch yourself writing Arduino code, stop, delete it, and rewrite
+  with ESP-IDF APIs.
+
+## 2. Target Hardware
+
+| Item | Value |
+|------|-------|
+| Device | M5StickC Plus 1.1 |
+| MCU | ESP32-PICO-D4 |
+| Display | ST7789, 240x135, DC=GPIO 23, RST=GPIO 18 |
+| Buttons | A=GPIO 37, B=GPIO 39, PWR=GPIO 35 |
+| I2C | SDA=GPIO 21, SCL=GPIO 22 |
+| IMU | MPU6886 (I2C) |
+| PMU | AXP192 (I2C 0x34) |
+| Battery | 120 mAh — avoid tight polling loops |
+| BLE | ESP32 BLE only (no classic BT) |
+| Grove UART | TX=GPIO 32, RX=GPIO 33 (for future GPS) |
+
+Do NOT invent hardware, assume a touchscreen, assume a camera on the stick,
+or assume large RAM/storage.
+
+## 3. HAL Architecture
+
+All hardware access goes through the HAL. Key files:
+
+- `main/m5stickc_plus11_hal.c` / `.h` (Plus 1.1 build)
+- `main/m5stickc_plus2_hal.c` / `.h` (Plus 2 build)
+
+Use HAL functions for display, buttons, IMU, power. Do NOT bypass the HAL.
+
+## 4. Project Goal (summary)
+
+Motion-triggered dashcam remote for DJI Osmo Action cameras via BLE.
+Full feature spec is in **SPEC.md** (read it when working on features).
+
+## 5. Build and Flash — MANDATORY WORKFLOW
+
+**Code changes are NOT on the device until you build and upload.**
+After ANY code change, you MUST build and confirm success before moving on.
+
+### Commands (Plus 1.1)
+
+```
+# Preferred — one-command script:
+./scripts/build_and_upload_plus11.sh
+
+# If pio is not on PATH:
+"$HOME/.platformio/penv/bin/pio" run -e m5stickc_plus11
+"$HOME/.platformio/penv/bin/pio" run -e m5stickc_plus11 -t upload
+
+# Build only (no upload):
+./scripts/build_and_upload_plus11.sh --no-upload
+```
+
+### PIO resolution order
+
+1. `pio` (PATH)
+2. `$HOME/.platformio/penv/bin/pio`
+3. `python3 -m platformio`
+
+## 6. Serial Debug Logs — MANDATORY FOR BUG FIXES
+
+Do NOT guess at runtime behaviour. Get evidence from the device.
+
+### How to capture
+
+```
+# With device connected via USB:
+./scripts/capture_logs.sh
+# or:
+python3 scripts/capture_serial.py 40 .cursor/debug-7ee220.log
+```
+
+Output goes to `.cursor/debug-7ee220.log`. Read that file to see FLOW lines,
+panics, boot messages, and errors.
+
+**If you cannot open the serial port**, ask the user to run the capture script,
+then read the log file.
+
+Do NOT iterate on firmware bug fixes without either:
+(a) runtime log evidence from this capture, or
+(b) explicit user confirmation of observed behaviour.
+
+## 7. Iteration Rules — READ THIS CAREFULLY
+
+When the user asks you to iterate until something works, you MUST follow
+this loop:
+
+1. **Edit** — make the code change.
+2. **Build** — run the build command. Read the output.
+3. **Check** — if the build failed, read the errors, fix them, go to step 1.
+4. **Upload** — if the build succeeded, upload to the device.
+5. **Verify** — if runtime verification is needed, capture serial logs or ask
+   the user for observed behaviour.
+6. **Repeat** — if there are remaining issues, go to step 1.
+
+### Rules for this loop
+
+- Do NOT stop after making an edit without building.
+- Do NOT stop after a failed build without attempting a fix.
+- Do NOT claim something works without a successful build.
+- Do NOT make the same fix twice — if it failed, try a different approach.
+- Do NOT ask the user "should I continue?" when there are obvious errors
+  you can fix. Just fix them and rebuild.
+- If you hit a wall after 3 attempts at the same error, explain the problem
+  and what you've tried, then ask for guidance.
+
+## 8. Source of Truth Hierarchy
+
+1. **SPEC.md** — feature requirements (what the firmware should do)
+2. **This file** (`.cursor/rules/project.mdc`) — workflow, tooling, constraints
+3. **README.md** — pin mappings, build instructions for humans
+
+## 9. Prohibited Patterns
+
+- Arduino / M5Stack Arduino libraries
+- Inventing hardware features not listed in section 2
+- Assuming GPS hardware is present (placeholder stub is fine per SPEC.md)
+- Bypassing the HAL for hardware access
+- Libraries incompatible with ESP32 / ESP-IDF
+- Stopping iteration when there are fixable errors
+- Guessing at runtime behaviour instead of checking logs

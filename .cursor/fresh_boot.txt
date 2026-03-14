@@ -1,0 +1,22 @@
+[0;32mI (13944) FLOW: motion dev=0.057 state=0[0m
+[0;32mI (13945) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (15946) FLOW: motion dev=0.068 state=0[0m
+[0;32mI (15946) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (17948) FLOW: motion dev=0.056 state=0[0m
+[0;32mI (17948) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (18950) MAIN: Background reconnection timer triggered[0m
+[0;32mI (18950) MAIN: Background reconnection not needed or failed[0m
+[0;32mI (19951) FLOW: motion dev=0.054 state=0[0m
+[0;32mI (19951) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (21953) FLOW: motion dev=0.070 state=0[0m
+[0;32mI (21953) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (23955) FLOW: motion dev=0.052 state=0[0m
+[0;32mI (23955) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (25957) FLOW: motion dev=0.059 state=0[0m
+[0;32mI (25957) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (27959) FLOW: motion dev=0.056 state=0[0m
+[0;32mI (27959) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (29961) FLOW: motion dev=0.066 state=0[0m
+[0;32mI (29961) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (31963) FLOW: motion dev=0.063 state=0[0m
+[0;32mI (31963) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
