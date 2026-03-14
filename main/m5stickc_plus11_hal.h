@@ -38,6 +38,7 @@
 /* Same API as Plus2 HAL so app_main/ui can use one include and same calls */
 int m5stickc_plus2_init(void);
 int m5stickc_plus2_power_init(void);
+void m5stickc_plus2_power_off(void);
 int m5stickc_plus2_i2c_init(void);
 int m5stickc_plus2_display_init(void);
 int m5stickc_plus2_buttons_init(void);

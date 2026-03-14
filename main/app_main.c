@@ -31,6 +31,7 @@
 #include "command_logic.h"
 #include "light_logic.h"
 #include "motion_logic.h"
+#include "status_logic.h"
 #include "gps.h"
 #ifdef M5STICKC_PLUS_11
 #include "m5stickc_plus11_hal.h"
@@ -101,7 +102,8 @@ void app_main(void) {
     if (reset_reason == ESP_RST_PANIC    ||
         reset_reason == ESP_RST_INT_WDT  ||
         reset_reason == ESP_RST_TASK_WDT ||
-        reset_reason == ESP_RST_WDT) {
+        reset_reason == ESP_RST_WDT      ||
+        reset_reason == ESP_RST_BROWNOUT) {
         ESP_LOGW(TAG, "Previous boot crashed (reason=%d) — erasing PHY calibration partition", (int)reset_reason);
         const esp_partition_t *phy_part = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_PHY, NULL);
@@ -229,11 +231,8 @@ void app_main(void) {
                 /* Display shutdown message to user */
                 ui_show_message("Shutting down...", M5_COLOR_RED, 1000);
                 
-                /* Disable power hold circuit to turn off device
-                 * M5StickC Plus2 uses a power hold circuit that must be
-                 * actively maintained to keep the device powered on
-                 */
-                gpio_set_level(M5_PWR_EN_PIN, 0);
+                /* HAL power-off: GPIO hold release (Plus2) or AXP192 shutdown (Plus 1.1) */
+                m5stickc_plus2_power_off();
                 
                 /* Infinite loop in case shutdown fails */
                 while(1) {
@@ -317,7 +316,7 @@ void app_main(void) {
                 s_is_recording = true;
             }
 
-            if (motion_logic_just_stopped() && s_is_recording) {
+            if (motion_logic_just_stopped() && (s_is_recording || is_camera_recording())) {
                 ESP_LOGI("FLOW", "motion_stopped → stop_record");
                 (void)command_logic_stop_record();
                 vTaskDelay(pdMS_TO_TICKS(500));

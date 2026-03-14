@@ -204,12 +204,20 @@ static void display_boot_self_test(void) {
  */
 #ifdef M5STICKC_PLUS_11
 
+/* AXP192 register addresses (M5StickC Plus 1.1) */
 #define AXP192_I2C_ADDR         0x34  /* AXP192 I2C address                          */
+#define AXP192_DCDC1_VOL_REG    0x26  /* DC-DC1 voltage: 0x68 = 3.3 V               */
 #define AXP192_LDO23_VOL_REG    0x28  /* LDO2[7:4] / LDO3[3:0] voltage              */
 #define AXP192_PWR_OUT_CTRL_REG 0x12  /* Power output enable                         */
-/* 0x4D = DCDC1(bit6) | LDO3(bit3) | LDO2(bit2) | EXTEN(bit0)
- * DCDC1 defaults to 3.3 V at power-on (reg 0x26 = 0x68); enabling it here is
- * safe and required for stable RF/BLE operation on Plus 1.1. */
+#define AXP192_VBUS_IPSOUT_REG  0x30  /* VBUS-IPSOUT path / current limit            */
+#define AXP192_PWROFF_VOL_REG   0x31  /* Power-off voltage threshold                 */
+#define AXP192_CHARGE_CTRL1_REG 0x33  /* Charging voltage / current                  */
+#define AXP192_BACKUP_CHG_REG   0x35  /* Backup battery charge control               */
+#define AXP192_PEK_PARAM_REG    0x36  /* PEK (power key) timing / over-temp shutdown */
+#define AXP192_ADC_EN1_REG      0x82  /* ADC enable 1                                */
+
+/* 0x4D = EXTEN(bit6) | LDO3(bit3) | LDO2(bit2) | DC-DC1(bit0)
+ * Matches the official M5StickC-Plus library begin() sequence. */
 #define AXP192_DISPLAY_PWR_BITS 0x4D
 /* LDO voltage encoding: val = (mV - 1800) / 100; 0xC → 3000 mV */
 #define AXP192_LDO23_3V0        0xCC  /* LDO2 = 3.0 V, LDO3 = 3.0 V                */
@@ -226,39 +234,54 @@ static esp_err_t axp192_read_reg(uint8_t reg, uint8_t *val) {
 }
 
 /**
- * @brief Power on the TFT display via AXP192 (Plus 1.1 only).
+ * @brief Full AXP192 initialization per M5StickC Plus official library.
  *
- * Enables LDO2 (backlight) and LDO3 (LCD logic) on the AXP192 at 3.0 V.
+ * Writes all power-management registers needed for stable operation, including
+ * the VBUS current-path register (0x30) that prevents the AXP192 from cutting
+ * power during the BLE RF hardware init current spike.
  *
  * Must be called after m5stickc_plus2_i2c_init().
- * Non-fatal: logs a warning and continues if any step fails.
  */
 static esp_err_t m5stickc_plus11_axp192_display_on(void) {
-    ESP_LOGI(TAG, "AXP192: powering on display (LDO2=backlight, LDO3=logic)");
+    ESP_LOGI(TAG, "AXP192: full init sequence (M5StickC Plus library)");
 
-    /* Set LDO2 and LDO3 voltages to 3.0 V */
-    esp_err_t ret = axp192_write_reg(AXP192_LDO23_VOL_REG, AXP192_LDO23_3V0);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "AXP192: LDO voltage write failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    /* Explicit register write; log result but continue on any single failure */
+    #define AXP_W(reg, val) do { \
+        esp_err_t _e = axp192_write_reg((reg), (val)); \
+        if (_e != ESP_OK) { \
+            ESP_LOGW(TAG, "AXP192: reg 0x%02X write failed: %s", (reg), esp_err_to_name(_e)); \
+        } \
+    } while (0)
 
-    /* Enable LDO2 (backlight) + LDO3 (LCD power) + EXTEN + DCDC1 */
+    /* DC-DC1 = 3.3 V (ESP32 core rail; confirms voltage before enabling) */
+    AXP_W(AXP192_DCDC1_VOL_REG,    0x68);
+    /* LDO2 = 3.0 V (TFT backlight), LDO3 = 3.0 V (TFT logic) */
+    AXP_W(AXP192_LDO23_VOL_REG,    0xCC);
+    /* Enable DC-DC1 | LDO3 | LDO2 | EXTEN (bit-OR to preserve bootloader bits) */
     uint8_t reg12 = 0;
-    ret = axp192_read_reg(AXP192_PWR_OUT_CTRL_REG, &reg12);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "AXP192: power-ctrl read failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    ret = axp192_write_reg(AXP192_PWR_OUT_CTRL_REG, reg12 | AXP192_DISPLAY_PWR_BITS);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "AXP192: power-ctrl write failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    axp192_read_reg(AXP192_PWR_OUT_CTRL_REG, &reg12);
+    AXP_W(AXP192_PWR_OUT_CTRL_REG, reg12 | AXP192_DISPLAY_PWR_BITS);
     ESP_LOGI(TAG, "AXP192: reg12 0x%02X → 0x%02X",
              (unsigned)reg12, (unsigned)(reg12 | AXP192_DISPLAY_PWR_BITS));
 
-    ESP_LOGI(TAG, "AXP192: display power on complete");
+    /* VBUS-IPSOUT path: enable 500 mA hold current limit.
+     * Without this the AXP192 defaults to a very conservative limit and cuts
+     * power during the BLE RF hardware init current spike. */
+    AXP_W(AXP192_VBUS_IPSOUT_REG,  0x80);
+    /* Power-off voltage = 3.0 V */
+    AXP_W(AXP192_PWROFF_VOL_REG,   0x04);
+    /* Charging: target 4.2 V, 100 mA */
+    AXP_W(AXP192_CHARGE_CTRL1_REG, 0xC0);
+    /* Backup battery: 3.0 V, 200 µA charging */
+    AXP_W(AXP192_BACKUP_CHG_REG,   0xA5);
+    /* PEK: long-press 1 s, power-off delay 4 s, over-temp shutdown at 85 °C */
+    AXP_W(AXP192_PEK_PARAM_REG,    0x0C);
+    /* Enable all ADC channels (battery voltage, current, temperature) */
+    AXP_W(AXP192_ADC_EN1_REG,      0xFF);
+
+    #undef AXP_W
+
+    ESP_LOGI(TAG, "AXP192: init complete");
     return ESP_OK;
 }
 
@@ -380,6 +403,28 @@ int m5stickc_plus2_power_init(void) {
     
     ESP_LOGI(TAG, "Power management initialized - PWR_EN=%d, BL=%d", M5_PWR_EN_PIN, M5_LCD_BL_PIN);
     return ESP_OK;
+}
+
+/**
+ * @brief Power off the device immediately.
+ *
+ * Plus 2:   releases the GPIO power-hold circuit (M5_PWR_EN_PIN LOW).
+ * Plus 1.1: commands the AXP192 PMU to shut down via register 0x32 bit 7.
+ *           The AXP192 cuts all power rails within ~50 ms.
+ */
+void m5stickc_plus2_power_off(void) {
+    ESP_LOGI(TAG, "Power off initiated");
+#ifdef M5STICKC_PLUS_11
+    uint8_t reg32 = 0;
+    axp192_read_reg(0x32, &reg32);
+    /* Bit 7 = 1 triggers immediate AXP192 shutdown */
+    axp192_write_reg(0x32, reg32 | 0x80);
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+#else
+    gpio_set_level(M5_PWR_EN_PIN, 0);
+#endif
 }
 
 /**

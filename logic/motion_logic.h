@@ -60,4 +60,23 @@ bool motion_logic_just_stopped(void);
  */
 uint32_t motion_logic_get_stop_countdown_sec_remaining(void);
 
+/**
+ * @brief Force the motion state machine to IDLE.
+ *
+ * Call when manually stopping recording via button press.  Does NOT set the
+ * just_stopped edge flag — the caller is responsible for issuing the stop
+ * command directly.
+ */
+void motion_logic_force_idle(void);
+
+/**
+ * @brief Force the motion state machine to MOVING.
+ *
+ * Call when manually starting recording via button press.  Does NOT set the
+ * just_started edge flag — the caller is responsible for issuing the start
+ * command directly.  The IMU will naturally transition to COUNTDOWN/IDLE once
+ * the vehicle stops.
+ */
+void motion_logic_force_active(void);
+
 #endif /* MOTION_LOGIC_H */

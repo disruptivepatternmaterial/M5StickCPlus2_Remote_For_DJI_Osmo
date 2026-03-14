@@ -992,21 +992,21 @@ int ui_get_text_width(const char* text, int text_size) {
  */
 void ui_update_auto_status_line_only(void) {
     int status_y = g_layout.text_y + 20;
-    /* Erase the status line row by filling it with black */
-    m5stickc_plus2_display_fill_rect(0, status_y, M5_LCD_H_RES, 10, M5_COLOR_BLACK);
+    /* Erase status row — 16 px tall to accommodate scale-2 (2×8 px) text */
+    m5stickc_plus2_display_fill_rect(0, status_y, M5_LCD_H_RES, 16, M5_COLOR_BLACK);
 
     uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
     bool moving = motion_logic_is_moving();
 
     if (!moving) {
-        m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Idle - No recording", M5_COLOR_GREY);
+        m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Idle", M5_COLOR_GREY, 2);
     } else if (countdown_sec > 0U) {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "Still - Stop in %lu:%02lu",
+        char buf[16];
+        snprintf(buf, sizeof(buf), "Stop:%lu:%02lu",
                  (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
-        m5stickc_plus2_display_print(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW);
+        m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW, 2);
     } else {
-        m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Moving - Recording", M5_COLOR_GREEN);
+        m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Recording!", M5_COLOR_GREEN, 2);
     }
 }
 
@@ -1064,24 +1064,28 @@ void ui_update_display(void) {
     /* Draw screen name centered below icon */
     m5stickc_plus2_display_print_scaled(centered_text_x, g_layout.text_y, screen->name, M5_COLOR_WHITE, text_scale);
     
-    /* Auto Start/Stop screen: status line (Idle / Moving–Recording / Still–countdown) per SPEC */
+    /* Auto Start/Stop screen: status line (Idle / Recording / Stop:M:SS) per SPEC */
     if (g_ui_state.current_screen == SCREEN_AUTO) {
         uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
         bool moving = motion_logic_is_moving();
         int status_y = g_layout.text_y + 20;
         if (!moving) {
-            m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Idle - No recording", M5_COLOR_GREY);
+            m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Idle", M5_COLOR_GREY, 2);
         } else if (countdown_sec > 0U) {
-            char buf[32];
-            snprintf(buf, sizeof(buf), "Still - Stop in %lu:%02lu", (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
-            m5stickc_plus2_display_print(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW);
+            char buf[16];
+            snprintf(buf, sizeof(buf), "Stop:%lu:%02lu",
+                     (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
+            m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW, 2);
         } else {
-            m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Moving - Recording", M5_COLOR_GREEN);
+            m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Recording!", M5_COLOR_GREEN, 2);
         }
     }
     
     /* Display button instructions in top-left corner */
-    m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y, "A : Run   B: Next", M5_COLOR_GREY);
+    const char *instruct = (g_ui_state.current_screen == SCREEN_AUTO)
+        ? "A:Toggle  B:Next"
+        : "A:Run     B:Next";
+    m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y, instruct, M5_COLOR_GREY);
     
     g_ui_state.display_needs_update = false;
     ESP_LOGI(TAG, "Display updated - Screen: %s", screen->name);
@@ -1465,12 +1469,35 @@ void ui_screen_sleep(void) {
 }
 
 /**
- * @brief Auto Start/Stop screen — motion-triggered recording status (per SPEC).
- * Button A: no-op (screen is informational; motion drives record start/stop).
+ * @brief Auto Start/Stop screen — Button A toggles recording.
+ *
+ * If recording is active: stop immediately and reset motion state to Idle.
+ * If idle: switch to video mode, start recording, and set motion state to
+ * Moving so the 5-minute stop countdown begins once the vehicle is still.
  */
 void ui_screen_auto(void) {
-    ESP_LOGI(TAG, "Auto Start/Stop screen (status only)");
-    g_ui_state.display_needs_update = true;
+    connect_state_t state = connect_logic_get_state();
+    if (state != PROTOCOL_CONNECTED) {
+        ui_show_not_connected_message();
+        return;
+    }
+
+    if (is_camera_recording()) {
+        ESP_LOGI(TAG, "Auto: manual stop");
+        (void)command_logic_stop_record();
+        motion_logic_force_idle();
+        ui_show_message("Stopped", M5_COLOR_YELLOW, 800);
+    } else {
+        ESP_LOGI(TAG, "Auto: manual start");
+        (void)command_logic_switch_camera_mode(CAMERA_MODE_NORMAL);
+        vTaskDelay(pdMS_TO_TICKS(200));
+        (void)command_logic_start_record();
+        motion_logic_force_active();
+        ui_show_message("Recording!", M5_COLOR_GREEN, 800);
+    }
+
+    /* Partial status-line refresh — no full screen clear needed */
+    ui_update_auto_status_line_only();
 }
 
 /**
