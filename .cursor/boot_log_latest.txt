@@ -1,0 +1,14 @@
+[0;33mW (35239) BT_APPL: gattc_conn_cb: if=3 st=0 id=3 rsn=0x100[0m
+[0;32mI (35241) BLE: Disconnected, reason=0x100[0m
+[0;31mE (35241) BLE: Open failed, status=133[0m
+[0;33mW (42119) LOGIC_CONNECT: BLE connection timed out after 10000ms[0m
+[0;33mW (42119) UI: BLE connection failed during reconnection[0m
+[0;32mI (42120) MAIN: Background reconnection not needed or failed[0m
+[0;32mI (43126) FLOW: motion dev=0.015 state=0[0m
+[0;32mI (43127) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (45128) FLOW: motion dev=0.010 state=0[0m
+[0;32mI (45128) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (47130) FLOW: motion dev=0.125 state=0[0m
+[0;32mI (47131) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
+[0;32mI (49132) FLOW: motion dev=0.114 state=0[0m
+[0;32mI (49132) FLOW: state conn=0 screen=0 moving=0 want_rec=0 is_rec=0 pending_mode=0[0m
