@@ -30,4 +30,14 @@ key_report_response_frame_t* command_logic_key_report_qs(void);
 
 camera_power_mode_switch_response_frame_t* command_logic_power_mode_switch_sleep(void);
 
+/**
+ * @brief Push GPS telemetry to camera (CmdSet=0x00, CmdID=0x17).
+ *
+ * Fire-and-forget — no response expected. Camera embeds GPS data into
+ * video metadata only when satellite_number > 0 in the frame.
+ *
+ * @param frame Filled GPS data frame. Must not be NULL.
+ */
+void command_logic_push_gps_data(const gps_data_push_command_frame_t *frame);
+
 #endif

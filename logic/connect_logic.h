@@ -24,4 +24,12 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
 
 int connect_logic_ble_wakeup(void);
 
+/**
+ * @brief Consume unexpected disconnect event marker.
+ *
+ * Returns true once after an unexpected disconnect is observed in BLE callback
+ * context. The flag is cleared when consumed.
+ */
+bool connect_logic_consume_unexpected_disconnect(void);
+
 #endif

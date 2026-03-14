@@ -225,6 +225,7 @@ camera_mode_switch_response_frame_t* command_logic_switch_camera_mode(camera_mod
 
     ESP_LOGI(TAG, "Constructed command frame: device_id=0x%08X, mode=%d", (unsigned int)command_frame.device_id, command_frame.mode);
 
+    /* CmdSet 0x1D, CmdID 0x04 — verify against Osmo Action 6 protocol if mode switch fails */
     CommandResult result = send_command(
         0x1D,
         0x04,
@@ -236,6 +237,7 @@ camera_mode_switch_response_frame_t* command_logic_switch_camera_mode(camera_mod
 
     if (result.structure == NULL) {
         ESP_LOGE(TAG, "Failed to send command or receive response");
+        ESP_LOGW("FLOW", "switch_camera_mode FAIL (no response)");
         return NULL;
     }
 
@@ -487,4 +489,17 @@ camera_power_mode_switch_response_frame_t* command_logic_power_mode_switch_sleep
 
     return response;  // Return the parsed response frame
                       // 返回解析后的响应帧
+}
+
+void command_logic_push_gps_data(const gps_data_push_command_frame_t *frame) {
+    if (frame == NULL) {
+        ESP_LOGE(TAG, "command_logic_push_gps_data: NULL frame");
+        return;
+    }
+    if (connect_logic_get_state() != PROTOCOL_CONNECTED) {
+        return;
+    }
+    uint16_t seq = generate_seq();
+    /* Fire-and-forget: CMD_NO_RESPONSE, timeout 0 */
+    (void)send_command(0x00, 0x17, CMD_NO_RESPONSE, frame, seq, 0);
 }

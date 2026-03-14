@@ -34,11 +34,16 @@
  */
 
 #include "ui.h"
+#ifdef M5STICKC_PLUS_11
+#include "m5stickc_plus11_hal.h"
+#else
 #include "m5stickc_plus2_hal.h"
+#endif
 #include "command_logic.h"
 #include "status_logic.h"
 #include "enums_logic.h"
 #include "connect_logic.h"
+#include "motion_logic.h"
 #include "data.h"
 #include "ble.h"
 #include "esp_log.h"
@@ -125,6 +130,8 @@ ui_state_t g_ui_state = {
     .scale_factor = 1.0f,               /* Display scaling factor for text/graphics */
     .scaled_text_size = 1               /* Text size multiplier for readability */
 };
+
+bool g_pending_set_video_mode_after_connect = false;
 
 /* Screen layout configuration - positions and sizes for UI elements
  * Automatically configured based on detected device type and screen resolution
@@ -724,12 +731,25 @@ static int ui_perform_complete_reconnection(bool show_messages) {
             g_camera_reserved
         );
         
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         if (res == 0) {
             if (show_messages) {
                 ui_show_message("Reconnected!", M5_COLOR_GREEN, 1000);
             }
-            /* Enable real-time camera status monitoring */
+            g_pending_set_video_mode_after_connect = true;
             subscript_camera_status(PUSH_MODE_PERIODIC_WITH_STATE_CHANGE, PUSH_FREQ_2HZ);
+            g_ui_state.current_screen = SCREEN_AUTO;
+            g_ui_state.display_needs_update = true;
             ESP_LOGI(TAG, "Complete reconnection successful");
             return 0;
         } else {
@@ -744,7 +764,6 @@ static int ui_perform_complete_reconnection(bool show_messages) {
         }
         ESP_LOGW(TAG, "BLE connection failed during reconnection");
     }
-    
     return -1;
 }
 
@@ -835,12 +854,19 @@ void ui_init(void) {
         data_register_status_update_callback(update_camera_state_handler);
         data_register_new_status_update_callback(update_new_camera_state_handler);
         if (!is_data_layer_initialized()) {
-            ESP_LOGE(TAG, "Failed to initialize data layer");
+            /* Data layer failed — still initialise the display so the user sees
+             * the UI (which will show "Not Connected") rather than a blank screen.
+             * Camera commands will not work until the data layer is available. */
+            ESP_LOGE(TAG, "UI init aborted: data layer failed to initialize — camera commands unavailable");
+            ui_detect_device_and_set_scale();
+            g_ui_state.current_screen = SCREEN_CONNECT;
+            g_ui_state.display_needs_update = true;
+            ui_update_display();
             return;
         }
         ESP_LOGI(TAG, "Data layer initialized successfully");
     }
-    
+
     /* Configure display scaling and layout for detected hardware */
     ui_detect_device_and_set_scale();
     g_ui_state.current_screen = SCREEN_CONNECT;
@@ -955,6 +981,36 @@ int ui_get_text_width(const char* text, int text_size) {
 }
 
 /**
+ * @brief Refresh only the Auto Start/Stop status line without a full redraw.
+ *
+ * Erases the single status-line row and redraws the current text
+ * (Idle / Moving–Recording / Still–countdown).  All other screen elements
+ * (icon, name, dots, connection indicator, instruction text) remain intact.
+ *
+ * Call this instead of triggering a full display update whenever the Auto
+ * screen is showing and only the status text has changed.
+ */
+void ui_update_auto_status_line_only(void) {
+    int status_y = g_layout.text_y + 20;
+    /* Erase the status line row by filling it with black */
+    m5stickc_plus2_display_fill_rect(0, status_y, M5_LCD_H_RES, 10, M5_COLOR_BLACK);
+
+    uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
+    bool moving = motion_logic_is_moving();
+
+    if (!moving) {
+        m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Idle - No recording", M5_COLOR_GREY);
+    } else if (countdown_sec > 0U) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Still - Stop in %lu:%02lu",
+                 (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
+        m5stickc_plus2_display_print(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW);
+    } else {
+        m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Moving - Recording", M5_COLOR_GREEN);
+    }
+}
+
+/**
  * @brief Update display with current UI state
  * 
  * Renders the complete user interface including:
@@ -1007,6 +1063,22 @@ void ui_update_display(void) {
     
     /* Draw screen name centered below icon */
     m5stickc_plus2_display_print_scaled(centered_text_x, g_layout.text_y, screen->name, M5_COLOR_WHITE, text_scale);
+    
+    /* Auto Start/Stop screen: status line (Idle / Moving–Recording / Still–countdown) per SPEC */
+    if (g_ui_state.current_screen == SCREEN_AUTO) {
+        uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
+        bool moving = motion_logic_is_moving();
+        int status_y = g_layout.text_y + 20;
+        if (!moving) {
+            m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Idle - No recording", M5_COLOR_GREY);
+        } else if (countdown_sec > 0U) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Still - Stop in %lu:%02lu", (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
+            m5stickc_plus2_display_print(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW);
+        } else {
+            m5stickc_plus2_display_print(g_layout.instruct_x, status_y, "Moving - Recording", M5_COLOR_GREEN);
+        }
+    }
     
     /* Display button instructions in top-left corner */
     m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y, "A : Run   B: Next", M5_COLOR_GREY);
@@ -1218,8 +1290,10 @@ void ui_screen_connect(void) {
                 /* Successful pairing - save camera information for future use */
                 store_camera_info();
                 ui_show_message("Paired Successfully!", M5_COLOR_GREEN, 1500);
-                /* Enable real-time camera status monitoring */
+                g_pending_set_video_mode_after_connect = true;
                 subscript_camera_status(PUSH_MODE_PERIODIC_WITH_STATE_CHANGE, PUSH_FREQ_2HZ);
+                g_ui_state.current_screen = SCREEN_AUTO;
+                g_ui_state.display_needs_update = true;
             } else {
                 ui_show_message("Pairing Failed", M5_COLOR_RED, 1500);
             }
@@ -1391,12 +1465,21 @@ void ui_screen_sleep(void) {
 }
 
 /**
+ * @brief Auto Start/Stop screen — motion-triggered recording status (per SPEC).
+ * Button A: no-op (screen is informational; motion drives record start/stop).
+ */
+void ui_screen_auto(void) {
+    ESP_LOGI(TAG, "Auto Start/Stop screen (status only)");
+    g_ui_state.display_needs_update = true;
+}
+
+/**
  * @brief Handle camera wake screen activation
- * 
+ *
  * Sends BLE advertising broadcast with wake-up pattern to rouse the camera
  * from sleep mode. Uses the MAC address of the paired camera to ensure
  * targeted wake-up.
- * 
+ *
  * Format: [10, 0xff, 'W','K','P', MAC[5-0] reversed]
  * Duration: 2 seconds of broadcasting
  */

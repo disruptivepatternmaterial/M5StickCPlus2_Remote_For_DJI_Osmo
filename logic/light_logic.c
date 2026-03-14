@@ -1,5 +1,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 #include "esp_log.h"
 #include "led_strip.h"
 #include "sdkconfig.h"
@@ -9,9 +10,9 @@
 
 #define TAG "LOGIC_LIGHT"
 
-#if defined(CONFIG_IDF_TARGET_ESP32) && defined(M5STICKC_PLUS2)
-/* M5StickC Plus2 internal LED */
-#define LED_GPIO 10               // M5StickC Plus2 internal LED on GPIO 10
+#if defined(CONFIG_IDF_TARGET_ESP32) && (defined(M5STICKC_PLUS2) || defined(M5STICKC_PLUS_11))
+/* M5StickC Plus2 / Plus 1.1 internal LED */
+#define LED_GPIO 10
 #elif defined(CONFIG_IDF_TARGET_ESP32C6)
 /* ESP32-C6 LED */
 #define LED_GPIO 8                // Use GPIO to control RGB LED

@@ -48,6 +48,13 @@
 #include "status_logic.h"
 #include "dji_protocol_data_structures.h"
 
+/* BLE connection wait parameters.
+ * The poll interval and maximum count together define how long we wait for
+ * the BLE stack to confirm a connection and for GATT handle discovery.
+ * Each phase is capped at BLE_WAIT_POLLS × BLE_POLL_INTERVAL_MS milliseconds. */
+#define BLE_POLL_INTERVAL_MS    100U   /* ms between each BLE readiness poll   */
+#define BLE_WAIT_POLLS          100U   /* 100 × 100 ms = 10 s per phase        */
+
 /* Logging tag for ESP_LOG functions */
 #define TAG "LOGIC_CONNECT"
 
@@ -56,6 +63,7 @@
  * Used throughout the system to determine available operations
  */
 static connect_state_t connect_state = BLE_NOT_INIT;
+static volatile bool s_unexpected_disconnect_pending = false;
 
 /**
  * @brief Get current connection state
@@ -102,34 +110,23 @@ void receive_camera_disconnect_handler() {
         case BLE_CONNECTED:
         case PROTOCOL_CONNECTED:
         default: {
-            ESP_LOGW(TAG, "Unexpected disconnection from state: %d, attempting reconnection...", connect_state);
-            
-            /* Unexpected disconnection - attempt automatic reconnection */
-            bool reconnected = false;
-            ESP_LOGI(TAG, "Reconnection attempt...");
-            if (connect_logic_ble_connect(true) == ESP_OK) {
-                /* Wait up to 30 seconds for reconnection to complete */
-                for (int j = 0; j < 300; j++) {
-                    if (s_ble_profile.connection_status.is_connected) {
-                        ESP_LOGI(TAG, "Reconnection successful");
-                        reconnected = true;
-                        return;  /* Successful reconnection - maintain current operation */
-                    }
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                }
-            }
-
-            if (!reconnected) {
-                ESP_LOGE(TAG, "Reconnection failed after 1 attempts");
-                /* Reconnection failed - perform clean disconnection */
-                connect_state = BLE_INIT_COMPLETE;
-                camera_status_initialized = false;
-                ble_disconnect();
-                ESP_LOGI(TAG, "Current state: DISCONNECTED.");
-            }
+            /* Do not block the BLE callback task. Reconnection is handled elsewhere. */
+            ESP_LOGW(TAG, "Unexpected disconnection from state: %d", connect_state);
+            connect_state = BLE_INIT_COMPLETE;
+            camera_status_initialized = false;
+            s_unexpected_disconnect_pending = true;
+            ESP_LOGI(TAG, "Marked reconnect request for main loop handling.");
             break;
         }
     }
+}
+
+bool connect_logic_consume_unexpected_disconnect(void) {
+    if (!s_unexpected_disconnect_pending) {
+        return false;
+    }
+    s_unexpected_disconnect_pending = false;
+    return true;
 }
 
 /**
@@ -189,37 +186,37 @@ int connect_logic_ble_connect(bool is_reconnecting) {
         return -1;
     }
 
-    /* 3. Wait up to 30 seconds to ensure BLE connection success */
-    ESP_LOGI(TAG, "Waiting up to 10s for BLE to connect...");
+    /* 3. Wait up to 10 seconds for the BLE connection to be established */
+    ESP_LOGI(TAG, "Waiting up to %us for BLE to connect...", (BLE_WAIT_POLLS * BLE_POLL_INTERVAL_MS) / 1000U);
     bool connected = false;
-    for (int i = 0; i < 100; i++) { // 300 * 100ms = 30s
+    for (uint32_t i = 0; i < BLE_WAIT_POLLS; i++) {
         if (s_ble_profile.connection_status.is_connected) {
             ESP_LOGI(TAG, "BLE connected successfully");
             connected = true;
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(BLE_POLL_INTERVAL_MS));
     }
     if (!connected) {
-        ESP_LOGW(TAG, "BLE connection timed out");
+        ESP_LOGW(TAG, "BLE connection timed out after %ums", BLE_WAIT_POLLS * BLE_POLL_INTERVAL_MS);
         connect_state = BLE_INIT_COMPLETE;
         return -1;
     }
 
-    /* 4. Wait for characteristic handle discovery completion (up to 30 seconds) */
-    ESP_LOGI(TAG, "Waiting up to 10s for characteristic handles discovery...");
+    /* 4. Wait up to 10 seconds for GATT characteristic handle discovery to complete */
+    ESP_LOGI(TAG, "Waiting up to %us for characteristic handle discovery...", (BLE_WAIT_POLLS * BLE_POLL_INTERVAL_MS) / 1000U);
     bool handles_found = false;
-    for (int i = 0; i < 100; i++) { // 300 * 100ms = 30s
+    for (uint32_t i = 0; i < BLE_WAIT_POLLS; i++) {
         if (s_ble_profile.handle_discovery.notify_char_handle_found && 
             s_ble_profile.handle_discovery.write_char_handle_found) {
             ESP_LOGI(TAG, "Required characteristic handles found");
             handles_found = true;
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(BLE_POLL_INTERVAL_MS));
     }
     if (!handles_found) {
-        ESP_LOGW(TAG, "Characteristic handles not found within timeout");
+        ESP_LOGW(TAG, "Characteristic handles not found within %ums timeout", BLE_WAIT_POLLS * BLE_POLL_INTERVAL_MS);
         connect_state = BLE_INIT_COMPLETE;
         return -1;
     }
@@ -312,7 +309,7 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
 
     // STEP1: Send connection request command to camera
     ESP_LOGI(TAG, "Sending connection request to camera...");
-    CommandResult result = send_command(0x00, 0x19, CMD_WAIT_RESULT, &connection_request, seq, 1000);
+    CommandResult result = send_command(0x00, 0x19, CMD_WAIT_RESULT, &connection_request, seq, 5000);
 
     /**** Connection issue: camera may return either response frame or command frame ****/
 
@@ -327,7 +324,7 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
         void *parse_result = NULL;
         size_t parse_result_length = 0;
         uint16_t received_seq = 0;
-        esp_err_t ret = data_wait_for_result_by_cmd(0x00, 0x19, 1000, &received_seq, &parse_result, &parse_result_length);
+        esp_err_t ret = data_wait_for_result_by_cmd(0x00, 0x19, 5000, &received_seq, &parse_result, &parse_result_length);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Timeout or error waiting for camera connection command, GOTO Failed.");
             connect_logic_ble_disconnect();

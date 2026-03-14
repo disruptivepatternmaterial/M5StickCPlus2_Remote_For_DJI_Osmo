@@ -27,6 +27,8 @@ const data_descriptor_t data_descriptors[] = {
     {0x00, 0x11, (data_creator_func_t)key_report_creator, (data_parser_func_t)key_report_parser},
     // Camera power mode switch
     {0x00, 0x1A, (data_creator_func_t)camera_power_mode_switch_creator, (data_parser_func_t)camera_power_mode_switch_parser},
+    // GPS data push (no response expected)
+    {0x00, 0x17, (data_creator_func_t)gps_data_push_creator, NULL},
 };
 const size_t DATA_DESCRIPTORS_COUNT = sizeof(data_descriptors) / sizeof(data_descriptors[0]);
 
@@ -536,4 +538,23 @@ int camera_power_mode_switch_parser(const uint8_t *data, size_t data_length, voi
     ESP_LOGI(TAG, "Camera Power Mode Switch Response parsed successfully. ret_code: %u", output_response->ret_code);
 
     return 0;
+}
+
+uint8_t* gps_data_push_creator(const void *structure, size_t *data_length, uint8_t cmd_type) {
+    (void)cmd_type; /* No response frame variant for GPS push */
+
+    if (structure == NULL || data_length == NULL) {
+        ESP_LOGE(TAG, "gps_data_push_creator: NULL input");
+        return NULL;
+    }
+
+    *data_length = sizeof(gps_data_push_command_frame_t);
+    uint8_t *data = (uint8_t *)malloc(*data_length);
+    if (data == NULL) {
+        ESP_LOGE(TAG, "gps_data_push_creator: allocation failed");
+        return NULL;
+    }
+
+    memcpy(data, structure, *data_length);
+    return data;
 }

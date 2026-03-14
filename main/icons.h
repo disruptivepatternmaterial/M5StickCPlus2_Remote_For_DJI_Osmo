@@ -22,6 +22,7 @@ extern const uint8_t key_icon[128];
 #define ICON_YELLOW  0xF81F   // Yellow for Quick Switch (red + green)
 #define ICON_WHITE   0xFFFF   // White default
 #define ICON_CYAN    0x07FF   // Cyan alternate
+#define ICON_GREEN   0x07E0   // Green for Auto Start/Stop
 
 // Color definitions are now in m5stickc_plus2_hal.h to avoid conflicts
 
