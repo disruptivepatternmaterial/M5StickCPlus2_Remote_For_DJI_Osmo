@@ -2,16 +2,16 @@
 
 Open firmware for an M5Stick-based BLE remote focused on dashcam-style use with DJI Osmo Action cameras.
 
-The project target is a motion-driven flow:
+The core behavior this project is driving toward:
 
 - movement starts -> wake/connect camera -> set video mode -> start recording
 - movement stops for a timeout -> stop recording -> sleep camera
 
-The authoritative feature behavior is in `SPEC.md`.
+`SPEC.md` is the authoritative feature definition.
 
 ## Current Focus
 
-This repo is actively being developed toward a reliable "install it and trust it" remote.
+This repo is in active development toward a reliable "install it and trust it" remote.
 
 Current work is centered on:
 
@@ -20,6 +20,19 @@ Current work is centered on:
 - board-specific HAL support across Plus2, Plus 1.1, and StickS3
 - GPS path (stub on Plus builds, NMEA on StickS3)
 - cleaner on-device status UI during auto start/stop operation
+
+## What I'm Working On Right Now
+
+- hardening reconnect behavior when the camera was manually power-cycled
+- reducing false stop/start transitions from motion noise
+- making the auto start/stop status screen update only when state text changes
+- validating StickS3 GPS fix handling before each push interval
+
+## Current Limitations
+
+- camera settings like resolution/FPS/EIS/FOV are not writable through the implemented BLE command set
+- Plus2 and Plus 1.1 still use a GPS stub path; real NMEA path is currently StickS3-only
+- wrong board target selection still causes the most common bring-up issue (blank/corrupt screen)
 
 ## Supported Hardware Targets
 
