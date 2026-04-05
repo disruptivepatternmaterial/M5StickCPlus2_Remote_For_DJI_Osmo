@@ -61,6 +61,7 @@ The M5StickC Plus2 features:
 
 - **M5Stick C Plus2** (default): LCD DC=14, RST=12.
 - **M5Stick C Plus 1.1**: LCD DC=23, RST=18 (same resolution 240×135). Use when building for Plus 1.1.
+- **M5 StickS3** ([product page](https://docs.m5stack.com/en/core/StickS3)): ESP32-S3, ST7789 (logical 240×135 after rotation), BMI270 IMU, M5PM1 PMIC, two buttons (KEY1/KEY2), **Unit GPS v1.1** on Grove PORT.A (G9 TX / G10 RX), 115200 NMEA. Build with `pio run -e m5sticks3` or `./scripts/build_and_upload_sticks3.sh`.
 
 ## Building the Project
 
@@ -74,6 +75,8 @@ From the repo root:
 
 - **M5Stick C Plus 1.1**:  
   `./scripts/build_and_upload_plus11.sh`
+- **M5 StickS3**:  
+  `./scripts/build_and_upload_sticks3.sh`
 - **M5Stick C Plus 2**:  
   Use PlatformIO directly (see below) or add a similar script if needed.
 
@@ -110,11 +113,13 @@ Use the environment that matches your device:
   `pio run -e m5stickc_plus2`
 - **M5Stick C Plus 1.1**:  
   `pio run -e m5stickc_plus11`
+- **M5 StickS3**:  
+  `pio run -e m5sticks3` (board `esp32-s3-devkitc-1`, `sdkconfig.defaults.m5sticks3`)
 
 Upload and monitor:
 
 ```bash
-pio run -e m5stickc_plus2 -t upload    # or m5stickc_plus11
+pio run -e m5stickc_plus2 -t upload    # or m5stickc_plus11 / m5sticks3
 pio device monitor
 ```
 
@@ -137,14 +142,11 @@ python3 scripts/generate_plus11_hal.py
    idf.py fullclean
    ```
 
-2. **CRITICAL**: Set target to ESP32 for M5StickC Plus2:
-   ```bash
-   idf.py set-target esp32
-   ```
-   
-   Note: M5StickC Plus2 uses ESP32-PICO-V3-02, which is a standard ESP32 chip.
+2. **CRITICAL**: Set the chip target to match the device:
+   - **M5StickC Plus2 / Plus 1.1**: `idf.py set-target esp32`
+   - **M5 StickS3**: `idf.py set-target esp32s3`
 
-3. Copy the M5StickC Plus2 specific configuration:
+3. Copy the board-specific defaults (example for Plus2):
    ```bash
    cp sdkconfig.defaults.m5stickc_plus2 sdkconfig.defaults
    ```

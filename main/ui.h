@@ -89,7 +89,7 @@ static const screen_info_t screen_info[SCREEN_COUNT] = {
     {"MODE", mode_icon, ICON_ORANGE, ui_screen_mode},
     {"SLEEP", sleep_icon, ICON_CYAN, ui_screen_sleep},
     {"WAKE", key_icon, ICON_YELLOW, ui_screen_wake},
-    {"AUTO START/STOP", record_icon, ICON_GREEN, ui_screen_auto}
+    {"AUTO", record_icon, ICON_GREEN, ui_screen_auto}
 };
 
 #endif // UI_H

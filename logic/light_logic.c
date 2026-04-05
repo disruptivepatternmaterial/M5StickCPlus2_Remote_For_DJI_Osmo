@@ -10,7 +10,10 @@
 
 #define TAG "LOGIC_LIGHT"
 
-#if defined(CONFIG_IDF_TARGET_ESP32) && (defined(M5STICKC_PLUS2) || defined(M5STICKC_PLUS_11))
+#if defined(M5STICKS3)
+/* StickS3: NeoPixel is on M5PM1 — not bit-banged on a fixed GPIO; skip WS2812 (status on LCD). */
+#define STICKS3_NO_WS2812 1
+#elif defined(CONFIG_IDF_TARGET_ESP32) && (defined(M5STICKC_PLUS2) || defined(M5STICKC_PLUS_11))
 /* M5StickC Plus2 / Plus 1.1 internal LED */
 #define LED_GPIO 10
 #elif defined(CONFIG_IDF_TARGET_ESP32C6)
@@ -28,6 +31,11 @@ static led_strip_handle_t led_strip = NULL;
 
 // Initialize RGB LED related configurations and settings
 static void init_rgb_led(void) {
+#if defined(STICKS3_NO_WS2812)
+    ESP_LOGI(TAG, "StickS3: WS2812 not used — connection status on display only");
+    led_strip = NULL;
+    return;
+#else
     // Configure LED
     led_strip_config_t strip_config = {
         .strip_gpio_num = LED_GPIO,
@@ -45,10 +53,17 @@ static void init_rgb_led(void) {
 
     led_strip_clear(led_strip); // Clear all LEDs and turn them off
     ESP_LOGI(TAG, "RGB LED initialized");
+#endif
 }
 
 // Set RGB LED color
 static void set_rgb_color(uint8_t red, uint8_t green, uint8_t blue) {
+    if (led_strip == NULL) {
+        (void)red;
+        (void)green;
+        (void)blue;
+        return;
+    }
     led_strip_set_pixel(led_strip, 0, red, green, blue);  // Set LED color
     led_strip_refresh(led_strip); // Refresh LED Strip to update color
 }

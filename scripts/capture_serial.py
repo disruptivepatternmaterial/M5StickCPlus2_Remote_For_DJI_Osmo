@@ -3,14 +3,22 @@
 Capture serial output from the device to a log file. No TTY required.
 Usage: python3 scripts/capture_serial.py [duration_sec] [output_path]
 Default: 40 seconds, .cursor/debug-7ee220.log
-Port: auto-detect first /dev/cu.usbserial* or /dev/ttyUSB* (115200 baud).
+Port: auto-detect first ESP-style port (115200 baud).
+  Priority: cu.usbmodem* (ESP32-S3 USB-JTAG/serial), then cu.usbserial*, ttyUSB*, ttyACM*.
 """
 import sys
 import glob
 import time
 
 def find_port():
-    for pattern in ["/dev/cu.usbserial*", "/dev/cu.SLAB*", "/dev/ttyUSB*", "/dev/ttyACM*"]:
+    patterns = [
+        "/dev/cu.usbmodem*",  # ESP32-S3 USB-JTAG/serial CDC
+        "/dev/cu.usbserial*",
+        "/dev/cu.SLAB*",
+        "/dev/ttyUSB*",
+        "/dev/ttyACM*",
+    ]
+    for pattern in patterns:
         ports = glob.glob(pattern)
         if ports:
             return sorted(ports)[0]

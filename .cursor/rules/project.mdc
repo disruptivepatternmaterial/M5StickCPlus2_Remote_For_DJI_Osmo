@@ -43,6 +43,7 @@ All hardware access goes through the HAL. Key files:
 
 - `main/m5stickc_plus11_hal.c` / `.h` (Plus 1.1 build)
 - `main/m5stickc_plus2_hal.c` / `.h` (Plus 2 build)
+- `main/m5sticks3_hal.c` / `.h` (M5 StickS3 build — ESP32-S3, BMI270, M5PM1)
 
 Use HAL functions for display, buttons, IMU, power. Do NOT bypass the HAL.
 
@@ -68,6 +69,19 @@ After ANY code change, you MUST build and confirm success before moving on.
 
 # Build only (no upload):
 ./scripts/build_and_upload_plus11.sh --no-upload
+```
+
+### Commands (M5 StickS3)
+
+```
+./scripts/build_and_upload_sticks3.sh
+
+# If pio is not on PATH:
+"$HOME/.platformio/penv/bin/pio" run -e m5sticks3
+"$HOME/.platformio/penv/bin/pio" run -e m5sticks3 -t upload
+
+# Build only:
+./scripts/build_and_upload_sticks3.sh --no-upload
 ```
 
 ### PIO resolution order

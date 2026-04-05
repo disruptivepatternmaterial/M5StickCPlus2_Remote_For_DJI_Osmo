@@ -1,39 +1,13 @@
 /*
- * DJI Camera Remote Control - M5StickC Plus2 Hardware Abstraction Layer
- * Compiled only when not building for M5Stick C Plus 1.1 (see m5stickc_plus11_hal.c).
+ * M5 StickS3 HAL — ESP32-S3, ST7789, BMI270, M5PM1.
+ * Same API as Plus HAL; compiled only when M5STICKS3 is defined.
+ *
+ * BMI270 config blob from M5Unified (MIT): bmi270_config_data.inc
  */
-#if !defined(M5STICKC_PLUS_11) && !defined(M5STICKS3)
+#ifdef M5STICKS3
 
-/*
- * This file implements the complete hardware abstraction layer for the M5StickC Plus2
- * development board, providing unified interfaces for all hardware components:
- * 
- * Hardware Components:
- * - ST7789 TFT LCD Display (240x135, 16-bit color)
- * - Power management (hold circuit, backlight PWM)
- * - Physical buttons (A, B, Power)
- * - I2C bus (IMU, RTC communication)
- * - SPI bus (display communication)
- * - GPIO control and monitoring
- * 
- * Display Features:
- * - Hardware-accelerated bitmap rendering
- * - Text rendering with scalable 8x8 font
- * - Color fill operations with RGB565 format
- * - Transparent bitmap drawing
- * - Configurable brightness control
- * 
- * The HAL provides a clean interface for the UI layer while handling all
- * low-level hardware details, timing, and ESP-IDF driver integration.
- * 
- * Hardware: M5StickC Plus2 (ESP32-PICO-V3)
- * Display: ST7789 controller, 240x135 resolution
- * Framework: ESP-IDF v5.5 with ESP-LCD drivers
- * 
- * Based on M5Stack hardware specifications
- */
+#include "m5sticks3_hal.h"
 
-#include "m5stickc_plus2_hal.h"
 #include "logo_bitmap.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
@@ -52,6 +26,7 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
+#include "esp_lcd_types.h"
 
 /* 8x8 Pixel Font Definition
  * 
@@ -157,11 +132,15 @@ static const uint8_t font8x8[][8] = {
 };
 
 /* Logging tag for ESP_LOG functions */
-static const char *TAG = "M5STICKC_HAL";
+static const char *TAG = "M5STICKS3_HAL";
+
+#include "bmi270_config_data.inc"
 
 /* ESP-LCD driver handles for display communication */
 static esp_lcd_panel_handle_t panel_handle = NULL;  /* ST7789 panel handle */
 static esp_lcd_panel_io_handle_t io_handle = NULL;  /* SPI I/O handle */
+/* ESP32-S3 SPI LCD uses DMA; draw buffers must be in DMA-capable internal RAM (not stack). */
+static uint16_t s_lcd_one_pixel_dma;
 
 /* Forward declarations for internal helper functions */
 static void draw_char_scaled(int x, int y, char c, uint16_t color, uint16_t bg_color, int scale);
@@ -173,11 +152,12 @@ static void display_boot_self_test(void);
  */
 static i2c_config_t i2c_conf = {
     .mode = I2C_MODE_MASTER,
-    .sda_io_num = M5_I2C_SDA_PIN,       /* GPIO21 - I2C Data line */
-    .scl_io_num = M5_I2C_SCL_PIN,       /* GPIO22 - I2C Clock line */
-    .sda_pullup_en = GPIO_PULLUP_ENABLE, /* Internal pull-up resistors */
+    .sda_io_num = M5_I2C_SDA_PIN,
+    .scl_io_num = M5_I2C_SCL_PIN,
+    .sda_pullup_en = GPIO_PULLUP_ENABLE,
     .scl_pullup_en = GPIO_PULLUP_ENABLE,
-    .master.clk_speed = 400000,         /* 400kHz for fast I2C communication */
+    /* 100 kHz: shared M5PM1 + BMI270 bus is more reliable after PMIC traffic */
+    .master.clk_speed = 100000,
 };
 
 static void display_boot_self_test(void) {
@@ -192,98 +172,113 @@ static void display_boot_self_test(void) {
     m5stickc_plus2_display_clear(M5_COLOR_BLACK);
 }
 
-/* ── AXP192 PMU support (M5StickC Plus 1.1 only) ────────────────────────────
- * Register assignments confirmed from the official M5StickC-Plus library:
- *   LDO2 (reg 0x12 bit 2) = TFT backlight LED power
- *   LDO3 (reg 0x12 bit 3) = TFT controller logic power
- * Both must be enabled for the display to work.
- * Plus 2 does NOT have an AXP192; its backlight is driven by GPIO 27 directly.
- *
+/* ── M5PM1 (StickS3) — Grove 5V / EXT_5V for Unit GPS on PORT.A ───────────── */
+#define M5PM1_REG_PWR_CFG   0x06
+#define M5PM1_REG_HOLD_CFG  0x07
+#define M5PM1_REG_SYS_CMD   0x0C
+#define M5PM1_REG_I2C_CFG   0x09
+/* Registers for PMIC GPIO2 (L3B / LCD power) — same sequence as M5GFX StickS3 autodetect. */
+#define M5PM1_REG_GPIO2_FN   0x16
+#define M5PM1_REG_GPIO2_MODE 0x10
+#define M5PM1_REG_GPIO2_PP   0x13
+#define M5PM1_REG_GPIO2_OUT  0x11
+
+/**
+ * Send a dummy I2C START+addr+STOP to wake M5PM1 from I2C idle-sleep mode.
+ * The M5PM1 library always does this before any register access (M5PM1.cpp line 644).
+ * NACK is expected and ignored — the purpose is only to clock out a START condition.
  */
-#ifdef M5STICKC_PLUS_11
-
-/* AXP192 register addresses (M5StickC Plus 1.1) */
-#define AXP192_I2C_ADDR         0x34  /* AXP192 I2C address                          */
-#define AXP192_DCDC1_VOL_REG    0x26  /* DC-DC1 voltage: 0x68 = 3.3 V               */
-#define AXP192_LDO23_VOL_REG    0x28  /* LDO2[7:4] / LDO3[3:0] voltage              */
-#define AXP192_PWR_OUT_CTRL_REG 0x12  /* Power output enable                         */
-#define AXP192_VBUS_IPSOUT_REG  0x30  /* VBUS-IPSOUT path / current limit            */
-#define AXP192_PWROFF_VOL_REG   0x31  /* Power-off voltage threshold                 */
-#define AXP192_CHARGE_CTRL1_REG 0x33  /* Charging voltage / current                  */
-#define AXP192_BACKUP_CHG_REG   0x35  /* Backup battery charge control               */
-#define AXP192_PEK_PARAM_REG    0x36  /* PEK (power key) timing / over-temp shutdown */
-#define AXP192_ADC_EN1_REG      0x82  /* ADC enable 1                                */
-
-/* 0x4D = EXTEN(bit6) | LDO3(bit3) | LDO2(bit2) | DC-DC1(bit0)
- * Matches the official M5StickC-Plus library begin() sequence. */
-#define AXP192_DISPLAY_PWR_BITS 0x4D
-/* LDO voltage encoding: val = (mV - 1800) / 100; 0xC → 3000 mV */
-#define AXP192_LDO23_3V0        0xCC  /* LDO2 = 3.0 V, LDO3 = 3.0 V                */
-
-static esp_err_t axp192_write_reg(uint8_t reg, uint8_t val) {
-    uint8_t buf[2] = {reg, val};
-    return i2c_master_write_to_device(I2C_NUM_0, AXP192_I2C_ADDR,
-                                      buf, sizeof(buf), pdMS_TO_TICKS(100));
+static void m5pm1_send_wake(void) {
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (M5PM1_I2C_ADDR << 1) | I2C_MASTER_WRITE, false /* NACK OK */);
+    i2c_master_stop(cmd);
+    /* Return value intentionally ignored — NACK is normal while device is asleep */
+    (void)i2c_master_cmd_begin(I2C_NUM_0, cmd, pdMS_TO_TICKS(50));
+    i2c_cmd_link_delete(cmd);
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
-static esp_err_t axp192_read_reg(uint8_t reg, uint8_t *val) {
-    return i2c_master_write_read_device(I2C_NUM_0, AXP192_I2C_ADDR,
+static esp_err_t m5pm1_write_reg(uint8_t reg, uint8_t val) {
+    uint8_t buf[2] = { reg, val };
+    return i2c_master_write_to_device(I2C_NUM_0, M5PM1_I2C_ADDR, buf, sizeof(buf),
+                                      pdMS_TO_TICKS(100));
+}
+
+static esp_err_t m5pm1_read_reg(uint8_t reg, uint8_t *val) {
+    return i2c_master_write_read_device(I2C_NUM_0, M5PM1_I2C_ADDR,
                                         &reg, 1, val, 1, pdMS_TO_TICKS(100));
 }
 
-/**
- * @brief Full AXP192 initialization per M5StickC Plus official library.
- *
- * Writes all power-management registers needed for stable operation, including
- * the VBUS current-path register (0x30) that prevents the AXP192 from cutting
- * power during the BLE RF hardware init current spike.
- *
- * Must be called after m5stickc_plus2_i2c_init().
- */
-static esp_err_t m5stickc_plus11_axp192_display_on(void) {
-    ESP_LOGI(TAG, "AXP192: full init sequence (M5StickC Plus library)");
-
-    /* Explicit register write; log result but continue on any single failure */
-    #define AXP_W(reg, val) do { \
-        esp_err_t _e = axp192_write_reg((reg), (val)); \
-        if (_e != ESP_OK) { \
-            ESP_LOGW(TAG, "AXP192: reg 0x%02X write failed: %s", (reg), esp_err_to_name(_e)); \
-        } \
-    } while (0)
-
-    /* DC-DC1 = 3.3 V (ESP32 core rail; confirms voltage before enabling) */
-    AXP_W(AXP192_DCDC1_VOL_REG,    0x68);
-    /* LDO2 = 3.0 V (TFT backlight), LDO3 = 3.0 V (TFT logic) */
-    AXP_W(AXP192_LDO23_VOL_REG,    0xCC);
-    /* Enable DC-DC1 | LDO3 | LDO2 | EXTEN (bit-OR to preserve bootloader bits) */
-    uint8_t reg12 = 0;
-    axp192_read_reg(AXP192_PWR_OUT_CTRL_REG, &reg12);
-    AXP_W(AXP192_PWR_OUT_CTRL_REG, reg12 | AXP192_DISPLAY_PWR_BITS);
-    ESP_LOGI(TAG, "AXP192: reg12 0x%02X → 0x%02X",
-             (unsigned)reg12, (unsigned)(reg12 | AXP192_DISPLAY_PWR_BITS));
-
-    /* VBUS-IPSOUT path: enable 500 mA hold current limit.
-     * Without this the AXP192 defaults to a very conservative limit and cuts
-     * power during the BLE RF hardware init current spike. */
-    AXP_W(AXP192_VBUS_IPSOUT_REG,  0x80);
-    /* Power-off voltage = 3.0 V */
-    AXP_W(AXP192_PWROFF_VOL_REG,   0x04);
-    /* Charging: target 4.2 V, 100 mA */
-    AXP_W(AXP192_CHARGE_CTRL1_REG, 0xC0);
-    /* Backup battery: 3.0 V, 200 µA charging */
-    AXP_W(AXP192_BACKUP_CHG_REG,   0xA5);
-    /* PEK: long-press 1 s, power-off delay 4 s, over-temp shutdown at 85 °C */
-    AXP_W(AXP192_PEK_PARAM_REG,    0x0C);
-    /* Enable all ADC channels (battery voltage, current, temperature) */
-    AXP_W(AXP192_ADC_EN1_REG,      0xFF);
-
-    #undef AXP_W
-
-    ESP_LOGI(TAG, "AXP192: init complete");
-    return ESP_OK;
+static esp_err_t m5pm1_rmw_bits(uint8_t reg, uint8_t set_mask, uint8_t clr_mask) {
+    uint8_t v = 0;
+    esp_err_t e = m5pm1_read_reg(reg, &v);
+    if (e != ESP_OK) {
+        return e;
+    }
+    v = (uint8_t)((v & (uint8_t)~clr_mask) | set_mask);
+    return m5pm1_write_reg(reg, v);
 }
 
-#endif /* M5STICKC_PLUS_11 */
+/**
+ * Turn on internal LCD rail via M5PM1 GPIO2 (L3B). Required before ST7789 init — see
+ * M5GFX board_M5StickS3 autodetect (M5GFX.cpp): without this the panel stays off even
+ * if backlight GPIO is high.
+ */
+static void sticks3_m5pm1_enable_lcd_power(void) {
+    const uint8_t b2 = (uint8_t)(1u << 2);
+
+    /* Send wake signal to pull M5PM1 out of I2C idle sleep, then verify it's alive.
+     * Pattern mirrors M5PM1.cpp begin() (legacy path): wake → 10ms → probe → if fail, wait 800ms + retry. */
+    m5pm1_send_wake();
+    uint8_t id_val = 0xFF;
+    esp_err_t id_ret = m5pm1_read_reg(0x00, &id_val);
+
+    if (id_ret != ESP_OK) {
+        ESP_LOGW(TAG, "M5PM1: first probe failed, retrying after 800ms");
+        vTaskDelay(pdMS_TO_TICKS(800));
+        m5pm1_send_wake();
+        id_ret = m5pm1_read_reg(0x00, &id_val);
+        if (id_ret != ESP_OK) {
+            ESP_LOGE(TAG, "M5PM1: not responding after retry — LCD power (L3B) will NOT be enabled");
+            return;
+        }
+    }
+
+    /* M5PM1 is alive. Set GPIO2 as output-high to enable L3B (LCD power rail). */
+    if (m5pm1_rmw_bits(M5PM1_REG_GPIO2_FN, 0, b2) != ESP_OK) { return; }
+    if (m5pm1_rmw_bits(M5PM1_REG_GPIO2_MODE, b2, 0) != ESP_OK) { return; }
+    if (m5pm1_rmw_bits(M5PM1_REG_GPIO2_PP, 0, b2) != ESP_OK) { return; }
+    if (m5pm1_rmw_bits(M5PM1_REG_GPIO2_OUT, b2, 0) != ESP_OK) { return; }
+
+    /* Disable I2C idle sleep so M5PM1 stays awake for subsequent operations */
+    (void)m5pm1_write_reg(M5PM1_REG_I2C_CFG, 0x00);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_LOGI(TAG, "M5PM1: LCD power (L3B) enabled");
+}
+
+/** Enable BOOST / 5VINOUT so Grove red wire powers the GPS module (M5 docs: setExtOutput). */
+static void sticks3_m5pm1_enable_grove_5v(void) {
+    uint8_t pwr = 0;
+    uint8_t hold = 0;
+    /* I2C_CFG was set to 0 (sleep disabled) in lcd_power; no re-wake needed, but send anyway
+     * in case lcd_power returned early due to earlier failure path. */
+    m5pm1_send_wake();
+    if (m5pm1_read_reg(M5PM1_REG_PWR_CFG, &pwr) != ESP_OK) {
+        ESP_LOGW(TAG, "M5PM1: read PWR_CFG failed — Grove 5V may be off");
+        return;
+    }
+    pwr |= (1u << 3); /* BOOST_EN */
+    if (m5pm1_write_reg(M5PM1_REG_PWR_CFG, pwr) != ESP_OK) {
+        ESP_LOGW(TAG, "M5PM1: write PWR_CFG failed");
+        return;
+    }
+    if (m5pm1_read_reg(M5PM1_REG_HOLD_CFG, &hold) == ESP_OK) {
+        hold |= (1u << 6); /* BOOST / Grove power hold */
+        (void)m5pm1_write_reg(M5PM1_REG_HOLD_CFG, hold);
+    }
+    ESP_LOGI(TAG, "M5PM1: Grove 5V (BOOST) requested");
+}
 
 /**
  * @brief Initialize all M5StickC Plus2 hardware components
@@ -297,7 +292,7 @@ static esp_err_t m5stickc_plus11_axp192_display_on(void) {
  * @return ESP_OK on success, ESP_ERR_* on failure
  */
 int m5stickc_plus2_init(void) {
-    ESP_LOGI(TAG, "Initializing M5StickC Plus2 hardware");
+    ESP_LOGI(TAG, "Initializing M5 StickS3 hardware");
     
     /* Initialize power management first - enables device hold circuit and backlight */
     int ret = m5stickc_plus2_power_init();
@@ -313,15 +308,11 @@ int m5stickc_plus2_init(void) {
         return ret;
     }
 
-#ifdef M5STICKC_PLUS_11
-    /* Power on TFT display via AXP192 (LDO2=backlight, LDO3=logic).
-     * Non-fatal: init continues even if AXP192 is not responding. */
-    ret = m5stickc_plus11_axp192_display_on();
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "AXP192 display power init failed (%s) — display may be dark",
-                 esp_err_to_name(ret));
-    }
-#endif
+    /* PMIC: LCD rail (L3B) must be on before ST7789 — same as M5GFX StickS3 path. */
+    sticks3_m5pm1_enable_lcd_power();
+
+    /* Unit GPS v1.1 on Grove: 5 V from BOOST (see M5 StickS3 EXT_5V notes). */
+    sticks3_m5pm1_enable_grove_5v();
 
     /* Initialize display subsystem (SPI, ST7789 controller) */
     ret = m5stickc_plus2_display_init();
@@ -337,48 +328,23 @@ int m5stickc_plus2_init(void) {
         return ret;
     }
 
+    /* BMI270 shares I2C with M5PM1 — short settle after PMIC/LCD sequence */
+    vTaskDelay(pdMS_TO_TICKS(50));
     /* Initialize IMU (non-fatal: log warning if absent but continue) */
     ret = m5stickc_plus2_imu_init();
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "IMU init failed (%s) - motion detection disabled", esp_err_to_name(ret));
     }
 
-    ESP_LOGI(TAG, "M5StickC Plus2 hardware initialized successfully");
+    ESP_LOGI(TAG, "M5 StickS3 hardware initialized successfully");
     return ESP_OK;
 }
 
 /**
- * @brief Initialize M5StickC Plus2 power management
- * 
- * Sets up the device power hold circuit and display backlight control.
- * The M5StickC Plus2 uses a power hold circuit that must be actively
- * maintained to keep the device powered after the power button is released.
- * 
- * @return ESP_OK on success, ESP_ERR_* on failure
+ * @brief Initialize M5 StickS3 power management (backlight GPIO; hold via M5PM1).
  */
 int m5stickc_plus2_power_init(void) {
-    ESP_LOGI(TAG, "Initializing power management for M5StickC Plus2");
-    
-    /* Configure power enable pin to maintain device power
-     * This pin must be held HIGH to keep the device powered on
-     * Setting it LOW will immediately shut down the device
-     */
-    gpio_config_t pwr_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << M5_PWR_EN_PIN),
-        .pull_down_en = 0,
-        .pull_up_en = 0,
-    };
-    esp_err_t ret = gpio_config(&pwr_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure power enable pin: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    
-    /* Enable power hold circuit - keeps device powered after button release */
-    gpio_set_level(M5_PWR_EN_PIN, 1);
-    ESP_LOGI(TAG, "Power hold enabled on GPIO %d", M5_PWR_EN_PIN);
+    ESP_LOGI(TAG, "Initializing power management for M5 StickS3");
     
     /* Configure display backlight control pin
      * Used for both on/off control and PWM brightness adjustment
@@ -390,7 +356,7 @@ int m5stickc_plus2_power_init(void) {
         .pull_down_en = 0,
         .pull_up_en = 0,
     };
-    ret = gpio_config(&io_conf);
+    esp_err_t ret = gpio_config(&io_conf);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to configure backlight pin: %s", esp_err_to_name(ret));
         return ret;
@@ -399,30 +365,20 @@ int m5stickc_plus2_power_init(void) {
     /* Enable backlight at full brightness by default */
     gpio_set_level(M5_LCD_BL_PIN, 1);
     
-    ESP_LOGI(TAG, "Power management initialized - PWR_EN=%d, BL=%d", M5_PWR_EN_PIN, M5_LCD_BL_PIN);
+    ESP_LOGI(TAG, "Power management initialized - BL=%d", M5_LCD_BL_PIN);
     return ESP_OK;
 }
 
 /**
- * @brief Power off the device immediately.
- *
- * Plus 2:   releases the GPIO power-hold circuit (M5_PWR_EN_PIN LOW).
- * Plus 1.1: commands the AXP192 PMU to shut down via register 0x32 bit 7.
- *           The AXP192 cuts all power rails within ~50 ms.
+ * @brief Power off the device immediately (M5PM1 system shutdown).
  */
 void m5stickc_plus2_power_off(void) {
     ESP_LOGI(TAG, "Power off initiated");
-#ifdef M5STICKC_PLUS_11
-    uint8_t reg32 = 0;
-    axp192_read_reg(0x32, &reg32);
-    /* Bit 7 = 1 triggers immediate AXP192 shutdown */
-    axp192_write_reg(0x32, reg32 | 0x80);
+    /* M5PM1_REG_SYS_CMD: high nibble key 0xA, low bits CMD=01 shutdown */
+    (void)m5pm1_write_reg(M5PM1_REG_SYS_CMD, 0xA1);
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-#else
-    gpio_set_level(M5_PWR_EN_PIN, 0);
-#endif
 }
 
 /**
@@ -456,115 +412,53 @@ int m5stickc_plus2_i2c_init(void) {
 }
 
 int m5stickc_plus2_display_init(void) {
-    ESP_LOGI(TAG, "Display init - Step 1: GPIO initialization only");
-    ESP_LOGI(TAG, "Pins: MOSI=%d, SCLK=%d, CS=%d, DC=%d, RST=%d, BL=%d", 
-             M5_LCD_MOSI_PIN, M5_LCD_SCLK_PIN, M5_LCD_CS_PIN, 
+    ESP_LOGI(TAG, "Display init pins: MOSI=%d SCLK=%d CS=%d DC=%d RST=%d BL=%d",
+             M5_LCD_MOSI_PIN, M5_LCD_SCLK_PIN, M5_LCD_CS_PIN,
              M5_LCD_DC_PIN, M5_LCD_RST_PIN, M5_LCD_BL_PIN);
-    
-    // Step 1: Just configure the GPIO pins without SPI
-    ESP_LOGI(TAG, "Configuring display control GPIOs...");
-    
-    // Configure reset pin
-    gpio_config_t rst_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << M5_LCD_RST_PIN),
-        .pull_down_en = 0,
-        .pull_up_en = 0,
-    };
-    esp_err_t ret = gpio_config(&rst_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure RST pin: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    ESP_LOGI(TAG, "RST pin configured");
-    
-    // Configure DC pin
-    gpio_config_t dc_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << M5_LCD_DC_PIN),
-        .pull_down_en = 0,
-        .pull_up_en = 0,
-    };
-    ret = gpio_config(&dc_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure DC pin: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    ESP_LOGI(TAG, "DC pin configured");
-    
-    // Configure CS pin
-    gpio_config_t cs_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << M5_LCD_CS_PIN),
-        .pull_down_en = 0,
-        .pull_up_en = 0,
-    };
-    ret = gpio_config(&cs_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure CS pin: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    gpio_set_level(M5_LCD_CS_PIN, 1);  // CS high (inactive)
-    ESP_LOGI(TAG, "CS pin configured and set high");
-    
-    // Perform a simple reset sequence
-    ESP_LOGI(TAG, "Performing display reset sequence...");
-    gpio_set_level(M5_LCD_RST_PIN, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level(M5_LCD_RST_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    ESP_LOGI(TAG, "Display reset complete");
-    
-    // Step 2: Initialize SPI bus
-    ESP_LOGI(TAG, "Step 2: Initializing SPI bus...");
-    
+
+    /* Do not gpio_config CS or drive RST here — SPI master owns CS; ST7789 driver owns RST.
+     * Manual CS as GPIO + hardware CS caused a dead bus on some ESP32-S3 panels. */
+
     spi_bus_config_t buscfg = {
         .mosi_io_num = M5_LCD_MOSI_PIN,
-        .miso_io_num = -1,  // Display doesn't use MISO
+        .miso_io_num = -1,
         .sclk_io_num = M5_LCD_SCLK_PIN,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 4096,
+        /* One full RGB565 frame; IDF LCD SPI chunks internally but needs a sane bus ceiling */
+        .max_transfer_sz = (int)(M5_LCD_H_RES * M5_LCD_V_RES * sizeof(uint16_t) + 64),
     };
     
-    // Try VSPI_HOST (SPI3) instead of SPI2_HOST
-    ret = spi_bus_initialize(VSPI_HOST, &buscfg, 1);  // Use DMA channel 1
+    esp_err_t ret = spi_bus_initialize(SPI3_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize SPI bus: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "SPI bus initialized on VSPI_HOST");
-    
-    // Step 3: Create LCD panel IO handle
-    ESP_LOGI(TAG, "Step 3: Creating LCD panel IO...");
+    ESP_LOGI(TAG, "SPI bus initialized");
+
     
     esp_lcd_panel_io_spi_config_t io_config = {
         .dc_gpio_num = M5_LCD_DC_PIN,
         .cs_gpio_num = M5_LCD_CS_PIN,
-        .pclk_hz = 26 * 1000 * 1000,  // 26MHz for better performance
+        .pclk_hz = 40 * 1000 * 1000,  /* Match M5GFX StickS3 (40 MHz SPI write) */
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
         .trans_queue_depth = 10,
     };
     
-    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)VSPI_HOST, &io_config, &io_handle);
+    ret = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI3_HOST, &io_config, &io_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to create panel IO: %s", esp_err_to_name(ret));
-        spi_bus_free(VSPI_HOST);
+        spi_bus_free(SPI3_HOST);
         return ret;
     }
-    ESP_LOGI(TAG, "LCD panel IO created");
-    
-    // Step 4: Create ST7789 panel
-    ESP_LOGI(TAG, "Step 4: Creating ST7789 panel...");
     
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = M5_LCD_RST_PIN,
-        .color_space = ESP_LCD_COLOR_SPACE_BGR,  // Use BGR color space
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        /* Buffers are native uint16_t in RAM — must match ST7789 RAMCTRL little-endian */
+        .data_endian = LCD_RGB_DATA_ENDIAN_LITTLE,
         .bits_per_pixel = 16,
         .flags = {
             .reset_active_high = 0,
@@ -577,10 +471,6 @@ int m5stickc_plus2_display_init(void) {
         ESP_LOGE(TAG, "Failed to create ST7789 panel: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "ST7789 panel created");
-    
-    // Step 5: Initialize the panel
-    ESP_LOGI(TAG, "Step 5: Initializing panel...");
     
     ret = esp_lcd_panel_reset(panel_handle);
     if (ret != ESP_OK) {
@@ -593,31 +483,19 @@ int m5stickc_plus2_display_init(void) {
         ESP_LOGE(TAG, "Failed to init panel: %s", esp_err_to_name(ret));
         return ret;
     }
-    ESP_LOGI(TAG, "Panel initialized");
     
-    // Step 6: Configure display settings
-    ESP_LOGI(TAG, "Step 6: Configuring display settings...");
-    
-    // Invert colors (ST7789 often needs this)
     esp_lcd_panel_invert_color(panel_handle, true);
 
-    // Landscape orientation (MV=1 via swap_xy).
-    // Both devices: gap(40,52) — with swap_xy=true: CASET=display_y+52 (cols 52-186),
-    // RASET=display_x+40 (rows 40-279), matching the 135×240 panel offsets.
-    // Mirror differs per hardware revision:
-    //   Plus 1.1: MADCTL 0x60 (MX=1, MY=0, MV=1) = rotation-1 landscape
-    //   Plus 2:   MADCTL 0xA0 (MX=0, MY=1, MV=1) = rotation-3 landscape
+    /* M5GFX StickS3 rotation=1: MX=1, MV=1, MY=0 → MADCTL 0x68
+     * swap_xy=true → MV=1; mirror(true,false) → MX=1,MY=0.
+     * Gap from M5GFX: offset_x=52 (physical cols), offset_y=40 (physical rows).
+     * With MV=1 (row/col exchange): CASET addresses rows → x_gap=40; RASET addresses cols → y_gap=52. */
     esp_lcd_panel_swap_xy(panel_handle, true);
-#ifdef M5STICKC_PLUS_11
     esp_lcd_panel_mirror(panel_handle, true, false);
-#else
-    esp_lcd_panel_mirror(panel_handle, false, true);
-#endif
     esp_lcd_panel_set_gap(panel_handle, 40, 52);
-    
-    // Turn on display
+
     esp_lcd_panel_disp_on_off(panel_handle, true);
-    
+    gpio_set_level(M5_LCD_BL_PIN, 1);
     ESP_LOGI(TAG, "Display initialization complete!");
     
     // Clear display to black and run a deterministic boot draw test
@@ -625,22 +503,6 @@ int m5stickc_plus2_display_init(void) {
     display_boot_self_test();
     
     return ESP_OK;
-    
-    /* Rest disabled
-    // Configure display control pins
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_DISABLE,
-        .mode = GPIO_MODE_OUTPUT,
-        .pin_bit_mask = (1ULL << M5_LCD_DC_PIN) | (1ULL << M5_LCD_RST_PIN),
-        .pull_down_en = 0,
-        .pull_up_en = 0,
-    };
-    esp_err_t ret = gpio_config(&io_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure GPIO pins");
-        return ret;
-    }
-    */
 }
 
 /**
@@ -664,13 +526,13 @@ int m5stickc_plus2_buttons_init(void) {
     gpio_config_t io_conf = {
         .intr_type = GPIO_INTR_DISABLE,
         .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << M5_BTN_A_PIN) | (1ULL << M5_BTN_B_PIN) | (1ULL << M5_BTN_PWR_PIN),
+        .pin_bit_mask = (1ULL << M5_BTN_A_PIN) | (1ULL << M5_BTN_B_PIN),
         .pull_down_en = 0,
         .pull_up_en = 0,  /* Cannot use internal pull-up on input-only pins */
     };
     gpio_config(&io_conf);
     
-    ESP_LOGI(TAG, "Buttons initialized - A=%d, B=%d, PWR=%d", M5_BTN_A_PIN, M5_BTN_B_PIN, M5_BTN_PWR_PIN);
+    ESP_LOGI(TAG, "Buttons initialized - A=%d, B=%d (no dedicated PWR GPIO)", M5_BTN_A_PIN, M5_BTN_B_PIN);
     return ESP_OK;
 }
 
@@ -707,7 +569,7 @@ bool m5stickc_plus2_button_b_pressed(void) {
  * @return true if button is pressed, false otherwise
  */
 bool m5stickc_plus2_button_pwr_pressed(void) {
-    return gpio_get_level(M5_BTN_PWR_PIN) == 0;
+    return false;
 }
 
 /**
@@ -779,7 +641,8 @@ void m5stickc_plus2_display_clear(uint16_t color) {
         /* Clear display using chunked approach to manage memory efficiently */
         const int chunk_height = 30;  /* Process 30 rows at a time */
         const int total_pixels = M5_LCD_H_RES * chunk_height;
-        uint16_t *buffer = malloc(total_pixels * sizeof(uint16_t));
+        uint16_t *buffer = (uint16_t *)heap_caps_malloc(total_pixels * sizeof(uint16_t),
+                                                       MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
         
         if (buffer) {
             /* Fill buffer with solid color (RGB565 format, no byte swapping needed) */
@@ -795,7 +658,7 @@ void m5stickc_plus2_display_clear(uint16_t color) {
                     ESP_LOGE(TAG, "Failed to draw bitmap at y=%d: %s", y, esp_err_to_name(ret));
                 }
             }
-            free(buffer);
+            heap_caps_free(buffer);
         } else {
             ESP_LOGE(TAG, "Failed to allocate display buffer");
         }
@@ -863,8 +726,9 @@ static void draw_char_scaled(int x, int y, char c, uint16_t color, uint16_t bg_c
                         int px = x + col * scale + sx;
                         int py = y + row * scale + sy;
                         if (px < M5_LCD_H_RES && py < M5_LCD_V_RES) {
-                            uint16_t pixel_color = color;
-                            esp_lcd_panel_draw_bitmap(panel_handle, px, py, px + 1, py + 1, &pixel_color);
+                            s_lcd_one_pixel_dma = color;
+                            esp_lcd_panel_draw_bitmap(panel_handle, px, py, px + 1, py + 1,
+                                                      &s_lcd_one_pixel_dma);
                         }
                     }
                 }
@@ -965,8 +829,9 @@ void m5stickc_plus2_display_draw_bitmap(int x, int y, int width, int height, con
             
             /* Only draw foreground pixels - background remains transparent */
             if (pixel_set) {
-                uint16_t pixel_color = color;
-                esp_lcd_panel_draw_bitmap(panel_handle, x + col, y + row, x + col + 1, y + row + 1, &pixel_color);
+                s_lcd_one_pixel_dma = color;
+                esp_lcd_panel_draw_bitmap(panel_handle, x + col, y + row, x + col + 1, y + row + 1,
+                                          &s_lcd_one_pixel_dma);
             }
         }
     }
@@ -1017,7 +882,8 @@ void m5stickc_plus2_display_fill_rect(int x, int y, int width, int height, uint1
     
     /* Allocate DMA-capable buffer for hardware-accelerated transfer */
     size_t buffer_size = draw_width * draw_height * sizeof(uint16_t);
-    uint16_t *buffer = (uint16_t *)heap_caps_malloc(buffer_size, MALLOC_CAP_DMA);
+    uint16_t *buffer = (uint16_t *)heap_caps_malloc(buffer_size,
+                                                     MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (buffer == NULL) {
         ESP_LOGE(TAG, "Failed to allocate rectangle buffer");
         return;
@@ -1038,68 +904,127 @@ void m5stickc_plus2_display_fill_rect(int x, int y, int width, int height, uint1
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- * MPU6886 6-axis IMU driver
- * I2C address: 0x68 on I2C_NUM_0 (SDA=GPIO21, SCL=GPIO22, 400kHz)
- *
- * Register map (datasheet §6):
- *   0x6B  PWR_MGMT_1   – write 0x00 to wake from sleep
- *   0x1B  GYRO_CONFIG  – [4:3] gyro FS_SEL
- *   0x1C  ACCEL_CONFIG – [4:3] accel AFS_SEL: 0=±2g, 1=±4g, 2=±8g, 3=±16g
- *   0x75  WHO_AM_I     – should read 0x19 for MPU6886
- *   0x3B  ACCEL_XOUT_H – first of 6 signed 16-bit big-endian accel registers
+ * BMI270 (M5Unified init pattern + config blob from bmi270_config_data.inc)
  * ──────────────────────────────────────────────────────────────────────── */
 
-#define MPU6886_REG_WHO_AM_I    0x75
-#define MPU6886_REG_PWR_MGMT_1  0x6B
-#define MPU6886_REG_ACCEL_CFG   0x1C
-#define MPU6886_REG_ACCEL_XOUT  0x3B
-#define MPU6886_WHO_AM_I_VAL    0x19
+#define BMI270_REG_CHIP_ID        0x00
+#define BMI270_REG_INTERNAL_STAT  0x21
+#define BMI270_REG_ACC_CONF         0x40
+#define BMI270_REG_INIT_CTRL        0x59
+#define BMI270_REG_INIT_ADDR_0      0x5B
+#define BMI270_REG_INIT_DATA        0x5E
+#define BMI270_REG_INT_MAP_DATA     0x58
+#define BMI270_REG_PWR_CTRL         0x7D
+#define BMI270_REG_PWR_CONF         0x7C
+#define BMI270_REG_CMD              0x7E
+#define BMI270_REG_ACC_X_LSB        0x0C
 
-/* ±8g: AFS_SEL = 2 → scale factor 4096 LSB/g */
-#define MPU6886_ACCEL_FS_8G     0x10
-#define MPU6886_ACCEL_SCALE     4096.0f
+#define BMI270_CHIP_ID_VAL          0x24
+#define BMI270_SOFT_RESET           0xB6
 
-static esp_err_t mpu6886_write_reg(uint8_t reg, uint8_t val) {
-    uint8_t buf[2] = {reg, val};
-    return i2c_master_write_to_device(I2C_NUM_0, MPU6886_I2C_ADDR, buf, 2, pdMS_TO_TICKS(100));
+/* ±8g range: same 4096 LSB/g as MPU6886 ±8g for comparable motion_logic thresholds */
+#define BMI270_ACCEL_SCALE          4096.0f
+
+/* Bosch BMI270: SDO pin selects 0x68 vs 0x69 — probe both */
+static uint8_t s_bmi270_i2c_addr = 0x69;
+
+static esp_err_t bmi270_write8(uint8_t reg, uint8_t val) {
+    uint8_t buf[2] = { reg, val };
+    return i2c_master_write_to_device(I2C_NUM_0, s_bmi270_i2c_addr, buf, 2, pdMS_TO_TICKS(80));
 }
 
-static esp_err_t mpu6886_read_reg(uint8_t reg, uint8_t *out, size_t len) {
-    esp_err_t ret = i2c_master_write_to_device(I2C_NUM_0, MPU6886_I2C_ADDR, &reg, 1, pdMS_TO_TICKS(100));
-    if (ret != ESP_OK) { return ret; }
-    return i2c_master_read_from_device(I2C_NUM_0, MPU6886_I2C_ADDR, out, len, pdMS_TO_TICKS(100));
+static esp_err_t bmi270_read8(uint8_t reg, uint8_t *out) {
+    return i2c_master_write_read_device(I2C_NUM_0, s_bmi270_i2c_addr, &reg, 1, out, 1, pdMS_TO_TICKS(80));
+}
+
+static esp_err_t bmi270_read_block(uint8_t reg, uint8_t *out, size_t len) {
+    return i2c_master_write_read_device(I2C_NUM_0, s_bmi270_i2c_addr, &reg, 1, out, len, pdMS_TO_TICKS(80));
+}
+
+static esp_err_t bmi270_upload_config(void) {
+    const size_t cfg_sz = sizeof(bmi270_config_file);
+    for (size_t off = 0; off < cfg_sz; off += 32) {
+        size_t chunk = cfg_sz - off;
+        if (chunk > 32) {
+            chunk = 32;
+        }
+        uint8_t ia[2] = { (uint8_t)((off >> 1) & 0x0F), (uint8_t)(off >> 5) };
+        uint8_t hdr[3] = { BMI270_REG_INIT_ADDR_0, ia[0], ia[1] };
+        esp_err_t e = i2c_master_write_to_device(I2C_NUM_0, s_bmi270_i2c_addr, hdr, 3, pdMS_TO_TICKS(80));
+        if (e != ESP_OK) {
+            return e;
+        }
+        uint8_t buf[33];
+        buf[0] = BMI270_REG_INIT_DATA;
+        memcpy(&buf[1], &bmi270_config_file[off], chunk);
+        e = i2c_master_write_to_device(I2C_NUM_0, s_bmi270_i2c_addr, buf, 1 + chunk, pdMS_TO_TICKS(80));
+        if (e != ESP_OK) {
+            return e;
+        }
+    }
+    return ESP_OK;
 }
 
 int m5stickc_plus2_imu_init(void) {
-    uint8_t who_am_i = 0;
-    esp_err_t ret;
-
-    ret = mpu6886_read_reg(MPU6886_REG_WHO_AM_I, &who_am_i, 1);
+    uint8_t who = 0;
+    esp_err_t ret = ESP_FAIL;
+    for (unsigned try = 0; try < 2u; try++) {
+        s_bmi270_i2c_addr = (try == 0u) ? 0x69u : 0x68u;
+        ret = bmi270_read8(BMI270_REG_CHIP_ID, &who);
+        if (ret == ESP_OK && who == BMI270_CHIP_ID_VAL) {
+            ESP_LOGI(TAG, "BMI270 at 7-bit I2C addr 0x%02X", (unsigned)s_bmi270_i2c_addr);
+            break;
+        }
+    }
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "MPU6886 WHO_AM_I read failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "BMI270 CHIP_ID read failed: %s", esp_err_to_name(ret));
         return ret;
     }
-    if (who_am_i != MPU6886_WHO_AM_I_VAL) {
-        ESP_LOGE(TAG, "MPU6886 unexpected WHO_AM_I: 0x%02X (expected 0x%02X)", who_am_i, MPU6886_WHO_AM_I_VAL);
+    if (who != BMI270_CHIP_ID_VAL) {
+        ESP_LOGE(TAG, "BMI270 unexpected CHIP_ID 0x%02X (expect 0x%02X)", who, BMI270_CHIP_ID_VAL);
         return ESP_ERR_NOT_FOUND;
     }
 
-    /* Wake from sleep */
-    ret = mpu6886_write_reg(MPU6886_REG_PWR_MGMT_1, 0x00);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "MPU6886 wake failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    /* Set accelerometer range to ±8g */
-    ret = mpu6886_write_reg(MPU6886_REG_ACCEL_CFG, MPU6886_ACCEL_FS_8G);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "MPU6886 accel config failed: %s", esp_err_to_name(ret));
-        return ret;
+    (void)bmi270_write8(BMI270_REG_CMD, BMI270_SOFT_RESET);
+    {
+        int retry = 20;
+        uint8_t pwr = 1;
+        do {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            (void)bmi270_read8(BMI270_REG_PWR_CONF, &pwr);
+        } while (pwr != 0 && --retry > 0);
     }
 
-    ESP_LOGI(TAG, "MPU6886 initialized (WHO_AM_I=0x%02X, ±8g range)", who_am_i);
+    (void)bmi270_write8(BMI270_REG_PWR_CONF, 0x00);
+    vTaskDelay(pdMS_TO_TICKS(1));
+
+    ret = bmi270_upload_config();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "BMI270 config upload failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    (void)bmi270_write8(BMI270_REG_INIT_CTRL, 0x01);
+    (void)bmi270_write8(BMI270_REG_INT_MAP_DATA, 0xFF);
+
+    {
+        int retry = 20;
+        uint8_t ist = 0;
+        do {
+            vTaskDelay(pdMS_TO_TICKS(1));
+            (void)bmi270_read8(BMI270_REG_INTERNAL_STAT, &ist);
+        } while (ist == 0 && --retry > 0);
+        if (retry <= 0) {
+            ESP_LOGW(TAG, "BMI270 INTERNAL_STATUS timeout (continuing)");
+        }
+    }
+
+    /* Accel + gyro + temp; no AUX (StickS3 has no BMM150 on BMI270 aux bus). */
+    (void)bmi270_write8(BMI270_REG_PWR_CTRL, 0x0B);
+    /* ±8g, normal performance (see Bosch BMI270 AN) */
+    (void)bmi270_write8(BMI270_REG_ACC_CONF, 0xA8);
+    vTaskDelay(pdMS_TO_TICKS(2));
+
+    ESP_LOGI(TAG, "BMI270 initialized (CHIP_ID=0x%02X)", who);
     return ESP_OK;
 }
 
@@ -1107,21 +1032,18 @@ int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az) {
     if (ax == NULL || ay == NULL || az == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-
     uint8_t raw[6];
-    esp_err_t ret = mpu6886_read_reg(MPU6886_REG_ACCEL_XOUT, raw, 6);
+    esp_err_t ret = bmi270_read_block(BMI270_REG_ACC_X_LSB, raw, sizeof(raw));
     if (ret != ESP_OK) {
         return ret;
     }
-
-    int16_t rx = (int16_t)((raw[0] << 8) | raw[1]);
-    int16_t ry = (int16_t)((raw[2] << 8) | raw[3]);
-    int16_t rz = (int16_t)((raw[4] << 8) | raw[5]);
-
-    *ax = (float)rx / MPU6886_ACCEL_SCALE;
-    *ay = (float)ry / MPU6886_ACCEL_SCALE;
-    *az = (float)rz / MPU6886_ACCEL_SCALE;
+    int16_t rx = (int16_t)((raw[1] << 8) | raw[0]);
+    int16_t ry = (int16_t)((raw[3] << 8) | raw[2]);
+    int16_t rz = (int16_t)((raw[5] << 8) | raw[4]);
+    *ax = (float)rx / BMI270_ACCEL_SCALE;
+    *ay = (float)ry / BMI270_ACCEL_SCALE;
+    *az = (float)rz / BMI270_ACCEL_SCALE;
     return ESP_OK;
 }
 
-#endif /* !M5STICKC_PLUS_11 && !M5STICKS3 */
+#endif /* M5STICKS3 */

@@ -33,7 +33,9 @@
 #include "motion_logic.h"
 #include "status_logic.h"
 #include "gps.h"
-#ifdef M5STICKC_PLUS_11
+#if defined(M5STICKS3)
+#include "m5sticks3_hal.h"
+#elif defined(M5STICKC_PLUS_11)
 #include "m5stickc_plus11_hal.h"
 #else
 #include "m5stickc_plus2_hal.h"
@@ -77,10 +79,14 @@ void app_main(void) {
      */
     res = m5stickc_plus2_init();
     if (res != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize M5StickC Plus2 hardware");
+        ESP_LOGE(TAG, "Failed to initialize M5 hardware");
         return;
     }
+#if defined(M5STICKS3)
+    ESP_LOGI(TAG, "M5 StickS3 hardware initialized");
+#else
     ESP_LOGI(TAG, "M5StickC Plus2 hardware initialized");
+#endif
 
     /* Initialize RGB LED light system
      * Sets up the WS2812 LED strip driver for status indication
@@ -88,10 +94,10 @@ void app_main(void) {
      */
     res = init_light_logic();
     if (res != 0) {
-        ESP_LOGE(TAG, "Failed to initialize light logic");
-        return;
+        ESP_LOGW(TAG, "Light logic init failed — continuing (no WS2812/status LED timers)");
+    } else {
+        ESP_LOGI(TAG, "Light logic initialized");
     }
-    ESP_LOGI(TAG, "Light logic initialized");
 
     /* If the previous boot crashed, the phy_init partition may contain a
      * partially-written or corrupted calibration record.  On the next boot
@@ -137,10 +143,10 @@ void app_main(void) {
     ESP_LOGI(TAG, "Initializing Bluetooth...");
     res = connect_logic_ble_init();
     if (res != 0) {
-        ESP_LOGE(TAG, "Failed to initialize Bluetooth");
-        return;
+        ESP_LOGW(TAG, "BLE init failed — UI still starts; fix BT/NVS/coexistence to use camera");
+    } else {
+        ESP_LOGI(TAG, "Bluetooth initialized successfully");
     }
-    ESP_LOGI(TAG, "Bluetooth initialized successfully");
 
     /* Initialize user interface system
      * Sets up: display rendering, screen management, button handlers,

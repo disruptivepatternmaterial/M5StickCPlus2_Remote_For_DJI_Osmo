@@ -56,16 +56,16 @@ via the 0x1D:0x02 status push. There is no BLE command to set them remotely.
 
 ## Motion Detection
 
-- **Sensor**: MPU6886 IMU via HAL (`m5stickc_plus2_imu_init()`, `m5stickc_plus2_imu_read_accel()`).
+- **Sensor**: MPU6886 (M5StickC Plus / Plus 1.1) or BMI270 (M5 StickS3) via HAL — `m5stickc_plus2_imu_init()`, `m5stickc_plus2_imu_read_accel()`.
 - **Logic**: `logic/motion_logic.c` — states IDLE / MOVING / COUNTDOWN.
 - **API**: `motion_logic_just_started()` / `motion_logic_just_stopped()` drive `app_main.c`.
 - **Timeout**: configurable; 15 s for testing, 5 min for production.
 
 ## GPS
 
-- **Now**: Placeholder stub returning fixed Switzerland coordinates.
+- **M5StickC Plus / Plus 1.1**: Placeholder stub returning fixed Switzerland coordinates.
   `gps_has_fix()` → true, `gps_get_data()` → stub coords.
-- **Later**: Replace `gps/gps.c` with real UART/NMEA driver (M5Stack GPS Module v2.0 on Grove port).
+- **M5 StickS3 + Unit GPS v1.1**: Real UART/NMEA on Grove PORT.A (ESP TX→Yellow G9, ESP RX←White G10), 115200 8N1. `gps_has_fix()` / `gps_get_data()` reflect parsed GGA/RMC when a fix is present.
 - **Push**: Every 1 s when connected and fix available, via `command_logic_push_gps_data()` (CmdSet 0x00, CmdID 0x17).
 
 ## Auto Start/Stop Screen
@@ -80,7 +80,7 @@ via the 0x1D:0x02 status push. There is no BLE command to set them remotely.
 - [ ] Motion: MPU6886 → motion_logic → `just_started` / `just_stopped` drive app_main.
 - [ ] Flow: wake → set Video (0x01) → start record; on still timeout → stop record → sleep.
 - [ ] Mode: `CAMERA_MODE_NORMAL` (0x01) sent before start record.
-- [ ] GPS: placeholder stub; push when connected; replace with NMEA when hardware wired.
+- [ ] GPS: Plus builds use stub; StickS3 uses NMEA from Unit GPS v1.1; push when connected.
 - [ ] Auto screen: status line (idle / moving / still–countdown); default after connect; no excessive redraws.
 
 

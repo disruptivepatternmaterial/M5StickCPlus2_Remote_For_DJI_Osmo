@@ -18,13 +18,17 @@ idf_component_register(SRCS "app_main.c"
                             "../gps/gps.c"
                             "m5stickc_plus2_hal.c"
                             "m5stickc_plus11_hal.c"
+                            "m5sticks3_hal.c"
                     PRIV_REQUIRES bt nvs_flash led_strip esp_lcd driver
                     INCLUDE_DIRS "." "../utils/crc" "../protocol" "../ble" "../data" "../logic" "../gps")
 
-# Device selection: Plus2 (default) or Plus 1.1 (DC=23, RST=18)
-# For PlatformIO: use env m5stickc_plus11 and board_build.cmake_extra_args = -DM5STICKC_PLUS_11_BUILD=ON
+# Device selection: Plus2 (default), Plus 1.1, or M5 StickS3 (mutually exclusive)
+# PlatformIO: m5stickc_plus11 → -DM5STICKC_PLUS_11_BUILD=ON ; m5sticks3 → -DM5STICKS3_BUILD=ON
+option(M5STICKS3_BUILD "Build for M5 StickS3 (ESP32-S3)" OFF)
 option(M5STICKC_PLUS_11_BUILD "Build for M5Stick C Plus 1.1 instead of Plus2" OFF)
-if(M5STICKC_PLUS_11_BUILD)
+if(M5STICKS3_BUILD)
+  target_compile_definitions(${COMPONENT_LIB} PUBLIC M5STICKS3)
+elseif(M5STICKC_PLUS_11_BUILD)
   target_compile_definitions(${COMPONENT_LIB} PUBLIC M5STICKC_PLUS_11)
 else()
   target_compile_definitions(${COMPONENT_LIB} PUBLIC M5STICKC_PLUS2)

@@ -19,13 +19,16 @@
 #include <stdint.h>
 
 /*
- * TODO: Update these to match how you wire the GPS module to the Plus 1.1.
- * Common options on M5StickC Plus:
- *   Grove port bottom: G32 (data) / G33 (clock) — check your specific unit
- *   HAT connector:     G0  / G26
+ * StickS3 + Unit GPS v1.1 on HY2.0 PORT.A: Yellow = module RX ← ESP TX, White = module TX → ESP RX.
+ * M5StickC Plus: stub still uses placeholder pins (real UART not enabled in gps.c for those builds).
  */
-#define GPS_UART_TX_PIN   0   /* TODO: confirm pin */
-#define GPS_UART_RX_PIN   26  /* TODO: confirm pin */
+#ifdef M5STICKS3
+#define GPS_UART_TX_PIN   9
+#define GPS_UART_RX_PIN   10
+#else
+#define GPS_UART_TX_PIN   0
+#define GPS_UART_RX_PIN   26
+#endif
 
 typedef struct {
     float    latitude;        /* Decimal degrees, positive = North */

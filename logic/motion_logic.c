@@ -19,7 +19,9 @@
 
 #include "motion_logic.h"
 
-#ifdef M5STICKC_PLUS_11
+#if defined(M5STICKS3)
+#include "m5sticks3_hal.h"
+#elif defined(M5STICKC_PLUS_11)
 #include "m5stickc_plus11_hal.h"
 #else
 #include "m5stickc_plus2_hal.h"

@@ -34,7 +34,9 @@
  */
 
 #include "ui.h"
-#ifdef M5STICKC_PLUS_11
+#if defined(M5STICKS3)
+#include "m5sticks3_hal.h"
+#elif defined(M5STICKC_PLUS_11)
 #include "m5stickc_plus11_hal.h"
 #else
 #include "m5stickc_plus2_hal.h"
@@ -45,6 +47,7 @@
 #include "connect_logic.h"
 #include "motion_logic.h"
 #include "data.h"
+#include "gps.h"
 #include "ble.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -449,6 +452,11 @@ static void gpio_monitor_task(void* pvParameters) {
  * @return ESP_OK on success, ESP_ERR_* on failure
  */
 static esp_err_t init_gpio_system(void) {
+#if defined(M5STICKS3)
+    /* ESP32-S3: GPIO 25–32 are tied to SPI flash / OPI PSRAM; G25/G26 triggers are invalid here. */
+    ESP_LOGI(TAG, "M5 StickS3: GPIO triggers skipped (no Plus2 G0/G25/G26 routing)");
+    return ESP_OK;
+#else
     esp_err_t ret = ESP_OK;
     
     ESP_LOGI(TAG, "Initializing GPIO trigger system");
@@ -552,6 +560,7 @@ static esp_err_t init_gpio_system(void) {
     ESP_LOGI(TAG, "  G25 (WAKE): Pull HIGH to trigger");
     
     return ESP_OK;
+#endif /* !M5STICKS3 */
 }
 
 /**
@@ -701,7 +710,11 @@ static int ui_perform_complete_reconnection(bool show_messages) {
         ESP_LOGI(TAG, "No paired camera found, cannot reconnect");
         return -1;
     }
-    
+    if (connect_logic_get_state() == BLE_NOT_INIT) {
+        ESP_LOGW(TAG, "BLE stack not initialized — skip reconnect");
+        return -1;
+    }
+
     ESP_LOGI(TAG, "Performing complete reconnection");
     if (show_messages) {
         ui_show_message("Reconnecting...", M5_COLOR_CYAN, 1000);
@@ -991,23 +1004,27 @@ int ui_get_text_width(const char* text, int text_size) {
  * screen is showing and only the status text has changed.
  */
 void ui_update_auto_status_line_only(void) {
-    int status_y = g_layout.text_y + 20;
-    /* Erase status row — 16 px tall to accommodate scale-2 (2×8 px) text */
-    m5stickc_plus2_display_fill_rect(0, status_y, M5_LCD_H_RES, 16, M5_COLOR_BLACK);
+    /* Status sits immediately below the scale-2 name (16 px) with a 2-px gap */
+    int status_y = g_layout.text_y + 18;
+    m5stickc_plus2_display_fill_rect(0, status_y, M5_LCD_H_RES, 10, M5_COLOR_BLACK);
 
     uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
     bool moving = motion_logic_is_moving();
-
+    char status_buf[12];
+    uint16_t status_color;
     if (!moving) {
-        m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Idle", M5_COLOR_GREY, 2);
+        snprintf(status_buf, sizeof(status_buf), "Idle");
+        status_color = M5_COLOR_GREY;
     } else if (countdown_sec > 0U) {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "Stop:%lu:%02lu",
+        snprintf(status_buf, sizeof(status_buf), "%lu:%02lu",
                  (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
-        m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW, 2);
+        status_color = M5_COLOR_YELLOW;
     } else {
-        m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Recording!", M5_COLOR_GREEN, 2);
+        snprintf(status_buf, sizeof(status_buf), "Rec!");
+        status_color = M5_COLOR_GREEN;
     }
+    int status_w = ui_get_text_width(status_buf, 1);
+    m5stickc_plus2_display_print(g_layout.text_x - status_w / 2, status_y, status_buf, status_color);
 }
 
 /**
@@ -1053,39 +1070,64 @@ void ui_update_display(void) {
     /* Get information for currently selected screen */
     const screen_info_t* screen = &screen_info[g_ui_state.current_screen];
     
-    /* Draw screen-specific icon with color coding */
+    /* Icon — identical position on every screen */
     ui_draw_bitmap(g_layout.icon_x, g_layout.icon_y, screen->icon, 32, 32, screen->color);
-    
-    /* Calculate centered text position for double-sized text rendering */
-    int text_scale = 2;  /* Double size for better readability */
+
+    /* Screen name centred below icon (scale 2) */
+    int text_scale = 2;
     int text_width = ui_get_text_width(screen->name, text_scale);
     int centered_text_x = g_layout.text_x - (text_width / 2);
-    
-    /* Draw screen name centered below icon */
-    m5stickc_plus2_display_print_scaled(centered_text_x, g_layout.text_y, screen->name, M5_COLOR_WHITE, text_scale);
-    
-    /* Auto Start/Stop screen: status line (Idle / Recording / Stop:M:SS) per SPEC */
+    m5stickc_plus2_display_print_scaled(centered_text_x, g_layout.text_y,
+                                        screen->name, M5_COLOR_WHITE, text_scale);
+
     if (g_ui_state.current_screen == SCREEN_AUTO) {
+        /* GPS panel — three lines to the right of the icon, same vertical band */
+        gps_data_t gps;
+        gps_get_data(&gps);
+        int gps_x = g_layout.icon_x + 32 + 2;   /* 2 px gap after icon right edge */
+        int gps_y = g_layout.icon_y;              /* aligned with icon top          */
+        uint16_t gps_color = gps.has_fix ? M5_COLOR_WHITE : M5_COLOR_DARKGREY;
+        char gps_buf[16];
+        if (gps.has_fix) {
+            snprintf(gps_buf, sizeof(gps_buf), "Lat:%.3f", (double)gps.latitude);
+            m5stickc_plus2_display_print(gps_x, gps_y,      gps_buf, gps_color);
+            snprintf(gps_buf, sizeof(gps_buf), "Lon:%.3f", (double)gps.longitude);
+            m5stickc_plus2_display_print(gps_x, gps_y + 12, gps_buf, gps_color);
+            snprintf(gps_buf, sizeof(gps_buf), "Alti:%.0fm", (double)gps.altitude);
+            m5stickc_plus2_display_print(gps_x, gps_y + 24, gps_buf, gps_color);
+        } else {
+            m5stickc_plus2_display_print(gps_x, gps_y,      "Lat: --", gps_color);
+            m5stickc_plus2_display_print(gps_x, gps_y + 12, "Lon: --", gps_color);
+            m5stickc_plus2_display_print(gps_x, gps_y + 24, "Alti:--", gps_color);
+        }
+
+        /* Motion / recording status below name */
         uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
         bool moving = motion_logic_is_moving();
-        int status_y = g_layout.text_y + 20;
+        char status_buf[12];
+        uint16_t status_color;
         if (!moving) {
-            m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Idle", M5_COLOR_GREY, 2);
+            snprintf(status_buf, sizeof(status_buf), "Idle");
+            status_color = M5_COLOR_GREY;
         } else if (countdown_sec > 0U) {
-            char buf[16];
-            snprintf(buf, sizeof(buf), "Stop:%lu:%02lu",
+            snprintf(status_buf, sizeof(status_buf), "%lu:%02lu",
                      (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
-            m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, buf, M5_COLOR_YELLOW, 2);
+            status_color = M5_COLOR_YELLOW;
         } else {
-            m5stickc_plus2_display_print_scaled(g_layout.instruct_x, status_y, "Recording!", M5_COLOR_GREEN, 2);
+            snprintf(status_buf, sizeof(status_buf), "Rec!");
+            status_color = M5_COLOR_GREEN;
         }
+        int status_y = g_layout.text_y + 18;
+        int status_w = ui_get_text_width(status_buf, 1);
+        m5stickc_plus2_display_print(g_layout.text_x - status_w / 2, status_y,
+                                     status_buf, status_color);
+
+        m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y,
+                                     "A:Tog    B:Next", M5_COLOR_GREY);
+    } else {
+        m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y,
+                                     "A:Run    B:Next", M5_COLOR_GREY);
     }
-    
-    /* Display button instructions in top-left corner */
-    const char *instruct = (g_ui_state.current_screen == SCREEN_AUTO)
-        ? "A:Toggle  B:Next"
-        : "A:Run     B:Next";
-    m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y, instruct, M5_COLOR_GREY);
     
     g_ui_state.display_needs_update = false;
     ESP_LOGI(TAG, "Display updated - Screen: %s", screen->name);
@@ -1166,7 +1208,11 @@ void ui_show_not_connected_message(void) {
  */
 static void ui_try_manual_pairing(void) {
     ESP_LOGI(TAG, "Attempting manual pairing fallback");
-    
+    if (connect_logic_get_state() == BLE_NOT_INIT) {
+        ui_show_message("BLE not ready", M5_COLOR_RED, 1500);
+        return;
+    }
+
     /* Switch to pairing mode for new device registration */
     g_verify_mode = 1;  /* Pairing mode requires camera-side confirmation */
     
@@ -1221,7 +1267,11 @@ void ui_screen_connect(void) {
         ui_show_message("Already Connected!", M5_COLOR_GREEN, 1000);
         return;
     }
-    
+    if (state == BLE_NOT_INIT) {
+        ui_show_message("BLE not ready", M5_COLOR_RED, 2000);
+        return;
+    }
+
     if (g_stored_camera.is_paired) {
         /* Camera already paired - attempt automatic reconnection */
         ESP_LOGI(TAG, "Attempting to reconnect to paired camera (verify_mode=0)");
