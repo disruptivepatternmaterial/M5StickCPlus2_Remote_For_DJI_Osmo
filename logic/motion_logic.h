@@ -79,4 +79,19 @@ void motion_logic_force_idle(void);
  */
 void motion_logic_force_active(void);
 
+/**
+ * @brief Auto-trigger arm/disarm.
+ *
+ * When DISARMED, motion_logic_update() still runs and is_moving()/edge flags
+ * still update for telemetry, but app_main treats motion_just_started() as a
+ * no-op (does not start recording). Use this to give the user a true "stop and
+ * stay stopped" semantic from the AUTO screen button: pressing stop disarms,
+ * pressing start re-arms.
+ *
+ * Defaults to ARMED on boot — the device is intended to be installed in a
+ * vehicle and start recording on first motion without any user action.
+ */
+void motion_logic_set_armed(bool armed);
+bool motion_logic_is_armed(void);
+
 #endif /* MOTION_LOGIC_H */

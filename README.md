@@ -5,7 +5,7 @@ Open firmware for an M5Stick-based BLE remote focused on dashcam-style use with 
 The core behavior this project is driving toward:
 
 - movement starts -> wake/connect camera -> set video mode -> start recording
-- movement stops for a timeout -> stop recording -> sleep camera
+- movement stops for a timeout -> stop recording, while keeping the camera awake for the next motion event
 
 `SPEC.md` is the authoritative feature definition.
 
@@ -31,8 +31,40 @@ Current work is centered on:
 ## Current Limitations
 
 - camera settings like resolution/FPS/EIS/FOV are not writable through the implemented BLE command set
+- camera storage behavior is not writable through BLE; Loop Recording must be enabled on the camera
+- video files cannot be transferred over this firmware's BLE control link
 - Plus2 and Plus 1.1 still use a GPS stub path; real NMEA path is currently StickS3-only
 - wrong board target selection still causes the most common bring-up issue (blank/corrupt screen)
+
+## Required Camera Setup
+
+Before using the remote unattended, configure the DJI camera itself:
+
+- Enable **Loop Recording** in Video mode. Plain Video mode will eventually fill the card and show
+  **Insufficient Storage**.
+- Set loop segments to about 3-5 minutes.
+- Disable **Pre-Rec** unless it is specifically needed.
+- Record to the microSD card, not internal storage on models that have both.
+- Use a UHS-I U3 / V30 or better microSD card, preferably 256 GB or 512 GB.
+- Format the card in the camera after copying off any footage you want to keep.
+- Use HEVC / Efficiency if your NAS and playback tools support it.
+
+The remote can switch the camera to Video mode and start/stop recording, but it cannot set Loop
+Recording, resolution, codec, EIS, FOV, or other camera-side shooting/storage settings.
+
+## Getting Footage to a NAS
+
+The BLE protocol used here is for camera control and GPS metadata. It does not expose video files.
+
+Practical offload options:
+
+- **USB transfer**: connect the powered-on camera to a computer or NAS helper over USB-C, choose
+  **Transfer File / USB Transfer** on the camera, then copy `DCIM` to the NAS. The camera cannot
+  record while transferring.
+- **microSD reader**: fastest and most reliable bulk import path.
+- **DJI Mimo / phone bridge**: download to a phone, then sync that folder to the NAS.
+- **Native NAS upload**: use only if your exact Osmo Action model and DJI Mimo version expose a
+  Camera Cloud Service / NAS / SMB feature. This is not controlled by this firmware.
 
 ## Supported Hardware Targets
 

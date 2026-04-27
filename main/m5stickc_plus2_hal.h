@@ -210,4 +210,13 @@ int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az);
 #define M5_COLOR_DARKGREY   0x39C6  // Dark grey for indicators
 #define M5_COLOR_GREY       0x7BEF  // Medium grey for text
 
+/* Intent-named colors that render correctly on this BGR panel.
+ * See m5sticks3_hal.h for the full rationale; values are identical because
+ * both StickC Plus2 and StickS3 use ESP_LCD_COLOR_SPACE_BGR. */
+#define M5_TRUE_RED         0x001F
+#define M5_TRUE_GREEN       0x07E0
+#define M5_TRUE_BLUE        0xF800
+#define M5_TRUE_YELLOW      0x07FF
+#define M5_TRUE_ORANGE      0x067F
+
 #endif /* M5STICKC_PLUS2_HAL_H */

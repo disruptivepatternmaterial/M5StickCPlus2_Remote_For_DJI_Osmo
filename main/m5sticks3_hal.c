@@ -160,10 +160,42 @@ static i2c_config_t i2c_conf = {
     .master.clk_speed = 100000,
 };
 
+/**
+ * @brief One-time wipe of panel RAM beyond the normal 240×135 viewport.
+ *
+ * On this StickS3 panel we observe stray pixels at the very right column
+ * and a band of uninitialized RAM at the very bottom row. Those addresses
+ * are *outside* the (40, 52)..(279, 186) window M5GFX nominates as visible,
+ * but the physical glass actually shows them. esp_lcd_panel_draw_bitmap()
+ * happily accepts coordinates past M5_LCD_H_RES/V_RES — there is no
+ * driver-side clipping — so we just push black bytes to a slightly larger
+ * region once, at boot, to wipe whatever junk powered up there. Subsequent
+ * UI math stays at 240×135 unchanged.
+ */
+static void display_wipe_edge_padding(void) {
+    if (panel_handle == NULL) return;
+    const int pad_w = M5_LCD_H_RES + 4;   /* +4 cols past the right edge */
+    const int pad_h = M5_LCD_V_RES + 4;   /* +4 rows past the bottom edge */
+    /* One row at a time keeps the DMA buffer tiny. */
+    uint16_t *row = (uint16_t *)heap_caps_malloc(pad_w * sizeof(uint16_t),
+                                                 MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if (!row) return;
+    for (int i = 0; i < pad_w; i++) row[i] = M5_COLOR_BLACK;
+    for (int y = 0; y < pad_h; y++) {
+        (void)esp_lcd_panel_draw_bitmap(panel_handle, 0, y, pad_w, y + 1, row);
+    }
+    heap_caps_free(row);
+}
+
 static void display_boot_self_test(void) {
     if (panel_handle == NULL) {
         return;
     }
+
+    /* Wipe the panel-RAM "no-man's-land" just outside the spec'd 240×135 window
+     * so leftover power-on RAM (rainbow pixels at bottom edge, dots at right edge)
+     * isn't visible during normal operation. */
+    display_wipe_edge_padding();
 
     m5stickc_plus2_display_clear(M5_COLOR_BLACK);
     m5stickc_plus2_display_draw_bitmap(LOGO_X, LOGO_Y, LOGO_W, LOGO_H,
@@ -1018,8 +1050,12 @@ int m5stickc_plus2_imu_init(void) {
         }
     }
 
-    /* Accel + gyro + temp; no AUX (StickS3 has no BMM150 on BMI270 aux bus). */
-    (void)bmi270_write8(BMI270_REG_PWR_CTRL, 0x0B);
+    /* PWR_CTRL bits per BMI270 datasheet §5.3.20: [0]=aux_en [1]=gyr_en [2]=acc_en [3]=temp_en.
+     * StickS3 has no BMM150 on the BMI270 aux bus → AUX OFF.
+     * Accel + gyro + temp = 0b00001110 = 0x0E.
+     * (Previous value 0x0B = aux+gyr+temp had ACC OFF, so reads always returned 0,0,0
+     *  and motion_logic saw constant deviation=1.0g → permanent false "moving" state.) */
+    (void)bmi270_write8(BMI270_REG_PWR_CTRL, 0x0E);
     /* ±8g, normal performance (see Bosch BMI270 AN) */
     (void)bmi270_write8(BMI270_REG_ACC_CONF, 0xA8);
     vTaskDelay(pdMS_TO_TICKS(2));

@@ -58,6 +58,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
+#include <math.h>
 #include "esp_random.h"
 #include "driver/gpio.h"
 #include "freertos/queue.h"
@@ -780,10 +781,28 @@ static int ui_perform_complete_reconnection(bool show_messages) {
     return -1;
 }
 
+/** Stack for BLE + protocol handshake — too deep for app_main (see sdkconfig main stack). */
+#define UI_AUTO_CONNECT_TASK_STACK  8192
+
+static void ui_auto_connect_task(void *arg) {
+    (void)arg;
+    /* Let display init + BLE controller finish; avoids WDT / stack pressure on app_main. */
+    vTaskDelay(pdMS_TO_TICKS(1500));
+    if (g_stored_camera.is_paired) {
+        ESP_LOGI(TAG, "Deferred auto-connect starting");
+        (void)ui_perform_complete_reconnection(true);
+    }
+    vTaskDelete(NULL);
+}
+
 void ui_auto_connect_on_startup(void) {
     if (g_stored_camera.is_paired) {
-        ESP_LOGI(TAG, "Found paired camera, attempting auto-connect");
-        ui_perform_complete_reconnection(true);
+        ESP_LOGI(TAG, "Scheduling deferred auto-connect (paired camera)");
+        BaseType_t ok = xTaskCreate(ui_auto_connect_task, "ui_auto_conn", UI_AUTO_CONNECT_TASK_STACK,
+                                    NULL, 5, NULL);
+        if (ok != pdPASS) {
+            ESP_LOGW(TAG, "auto-connect task create failed — skipping startup reconnect");
+        }
     } else {
         ESP_LOGI(TAG, "No paired camera found, manual pairing required");
     }
@@ -954,27 +973,48 @@ void ui_draw_bitmap(int16_t x, int16_t y, const uint8_t *bitmap, int16_t w, int1
 }
 
 /**
- * @brief Draw connection status indicator
- * 
- * Displays a colored rectangle indicating the current camera connection state:
- * - Green: Fully connected to camera (BLE + protocol)
- * - Red: Not connected or connection in progress
+ * @brief Draw the BLE connection indicator in the top-right corner.
+ *
+ * Layout (right-aligned, y=2):  "BT" [■]
+ *   - Small label "BT" so the user can tell what the colored block represents
+ *     (without it the bare square is just an unexplained dot).
+ *   - 8×8 filled square next to it; same color as the label.
+ *
+ * Colors are chosen from the ICON_* set rather than M5_COLOR_*: this panel uses
+ * BGR element ordering, and we have empirical evidence (the AUTO icon renders
+ * green on screen) that ICON_GREEN actually shows as green here, while
+ * M5_COLOR_GREEN renders as something else.  ICON_RED is the conventional R
+ * channel that does render red on the visible side.
+ *
+ * The full bounding box (label + dot) is wiped to black first so a previous
+ * wider/taller render can never leave a stray pixel ("white dot in the upper
+ * square") behind.
  */
 void ui_draw_connection_status(void) {
-    uint16_t color;
     connect_state_t state = connect_logic_get_state();
-    
-    /* Color coding: Green for fully connected, Red for any other state */
-    if (state == PROTOCOL_CONNECTED) {
-        color = M5_COLOR_GREEN;
-    } else {
-        color = M5_COLOR_RED;
-    }
-    
-    /* Draw connection status as small filled rectangle in top-right corner */
-    int size = g_layout.connection_radius * 2;
-    m5stickc_plus2_display_fill_rect(g_layout.status_x - size/2, g_layout.status_y - size/2, 
-                                     size, size, color);
+    bool connected = (state == PROTOCOL_CONNECTED);
+
+    /* Bounding box for label + square. Right-aligned at x=237 (3 px from edge). */
+    const int box_right = 237;
+    const int box_y     = 2;
+    const int box_h     = 12;
+    const int label_w   = 16;          /* "BT" at scale 1 = 2 chars × 8 px */
+    const int dot_w     = 8;
+    const int gap       = 2;
+    const int box_w     = label_w + gap + dot_w;       /* 26 px wide */
+    const int box_left  = box_right - box_w;           /* x=211 */
+
+    /* Clear the whole bounding box first to avoid any leftover pixels. */
+    m5stickc_plus2_display_fill_rect(box_left, box_y, box_w, box_h, M5_COLOR_BLACK);
+
+    uint16_t color = connected ? M5_TRUE_GREEN : M5_TRUE_RED;
+
+    /* "BT" label */
+    m5stickc_plus2_display_print(box_left, box_y + 2, "BT", color);
+
+    /* Filled square next to label */
+    m5stickc_plus2_display_fill_rect(box_left + label_w + gap, box_y + 2,
+                                     dot_w, dot_w, color);
 }
 
 /**
@@ -993,38 +1033,186 @@ int ui_get_text_width(const char* text, int text_size) {
     return strlen(text) * char_width;
 }
 
+/* ── AUTO screen layout constants ─────────────────────────────────────────────
+ * Hand-tuned for 240×135. Vertical budget below the 32×32 icon (icon ends at
+ * icon_y+32 = 69) is ~58 px before the nav-dots row at y=128. We use it for:
+ *   - status pill   y=AUTO_PILL_Y  .. AUTO_PILL_Y+AUTO_PILL_H   (28 px)
+ *   - GPS line      y=AUTO_GPS_Y   .. AUTO_GPS_Y+8              (10 px)
+ * The "AUTO" word from the shared layout is intentionally NOT drawn on this
+ * screen; the green/red/yellow icon + active nav dot already identify it,
+ * and the freed row lets the status pill be big and unambiguous.
+ */
+#define AUTO_PILL_X    8
+#define AUTO_PILL_Y    78
+#define AUTO_PILL_W    (240 - 2 * AUTO_PILL_X)   /* = 224 px wide */
+#define AUTO_PILL_H    28
+#define AUTO_GPS_Y     112                        /* scale-1 GPS row, ends y≈120, 4 px above dots band */
+
+/* Pre-computed state info for the AUTO status pill. */
+typedef struct {
+    const char *text;       /* Pill label (centered, scale 2) */
+    uint16_t    icon_color; /* Color for the 32×32 record icon */
+    uint16_t    pill_bg;    /* Pill fill color */
+    uint16_t    pill_fg;    /* Pill text color */
+} auto_pill_info_t;
+
+/* Compose the pill state from arm + camera-recording + motion-countdown state.
+ * `buf` is a scratch buffer used when the label needs formatting (countdown).
+ *
+ * Priority order:
+ *   DISARMED  → user pressed Stop; auto-trigger off. Show clear OFF state.
+ *   COUNTDOWN → IMU has been quiet long enough that the stop timer is now ticking.
+ *   RECORDING → camera reports it is recording. (We trust the camera's status,
+ *               not the IMU — IMU is just a trigger, recording can outlive
+ *               momentary stillness.)
+ *   IDLE      → armed but camera not recording — waiting for motion to kick it off.
+ *
+ * NOTE: use M5_TRUE_* (not M5_COLOR_*) for the colored states. On this BGR
+ * panel M5_COLOR_GREEN renders as red and M5_COLOR_YELLOW renders as magenta.
+ */
+static void auto_compute_pill(auto_pill_info_t *out, char *buf, size_t buf_len) {
+    bool     armed         = motion_logic_is_armed();
+    bool     recording     = is_camera_recording();
+    uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
+
+    if (!armed) {
+        out->text       = "OFF";
+        out->icon_color = M5_COLOR_DARKGREY;
+        out->pill_bg    = M5_COLOR_DARKGREY;
+        out->pill_fg    = M5_COLOR_WHITE;
+    } else if (recording && countdown_sec > 0U) {
+        snprintf(buf, buf_len, "STOP %lu:%02lu",
+                 (unsigned long)(countdown_sec / 60U),
+                 (unsigned long)(countdown_sec % 60U));
+        out->text       = buf;
+        out->icon_color = M5_TRUE_YELLOW;
+        out->pill_bg    = M5_TRUE_YELLOW;
+        out->pill_fg    = M5_COLOR_BLACK;
+    } else if (recording) {
+        out->text       = "REC";
+        out->icon_color = M5_TRUE_GREEN;
+        out->pill_bg    = M5_TRUE_GREEN;
+        out->pill_fg    = M5_COLOR_BLACK;
+    } else {
+        out->text       = "WAITING";
+        out->icon_color = M5_COLOR_GREY;
+        out->pill_bg    = M5_COLOR_DARKGREY;
+        out->pill_fg    = M5_COLOR_WHITE;
+    }
+}
+
+/* Draw the colored status pill + centered scale-2 label. Always erases the
+ * pill rectangle first so there are no leftovers from a previous wider label. */
+static void auto_draw_pill(const auto_pill_info_t *info) {
+    m5stickc_plus2_display_fill_rect(AUTO_PILL_X, AUTO_PILL_Y,
+                                     AUTO_PILL_W, AUTO_PILL_H, info->pill_bg);
+    int text_w = ui_get_text_width(info->text, 2);
+    int text_x = AUTO_PILL_X + (AUTO_PILL_W - text_w) / 2;
+    int text_y = AUTO_PILL_Y + (AUTO_PILL_H - 16) / 2;   /* 16 = scale-2 char height */
+    m5stickc_plus2_display_print_scaled(text_x, text_y, info->text, info->pill_fg, 2);
+}
+
+/* Draw the centered GPS line just below the pill, leaving a clear band
+ * before the nav dots. Erases its row first to avoid digit-overlap artifacts. */
+static void auto_draw_gps_line(void) {
+    /* Clear a 10-px row so changing-length strings don't leave ghosts. */
+    m5stickc_plus2_display_fill_rect(0, AUTO_GPS_Y, M5_LCD_H_RES, 10, M5_COLOR_BLACK);
+
+    gps_data_t gps;
+    gps_get_data(&gps);
+
+    char buf[40];
+    uint16_t color;
+    if (gps.has_fix) {
+        snprintf(buf, sizeof(buf), "%.4f, %.4f  %u sat",
+                 (double)gps.latitude, (double)gps.longitude,
+                 (unsigned)gps.satellite_count);
+        color = M5_TRUE_YELLOW;
+    } else {
+        snprintf(buf, sizeof(buf), "GPS searching%s",
+                 gps.satellite_count > 0 ? "..." : "");
+        color = M5_COLOR_DARKGREY;
+    }
+    int w = ui_get_text_width(buf, 1);
+    int x = (M5_LCD_H_RES - w) / 2;
+    if (x < 2) x = 2;
+    m5stickc_plus2_display_print(x, AUTO_GPS_Y + 1, buf, color);
+}
+
 /**
- * @brief Refresh only the Auto Start/Stop status line without a full redraw.
+ * @brief Refresh only the Auto Start/Stop status pill + GPS line without a full redraw.
  *
- * Erases the single status-line row and redraws the current text
- * (Idle / Moving–Recording / Still–countdown).  All other screen elements
- * (icon, name, dots, connection indicator, instruction text) remain intact.
+ * Cached partial repaint: re-touches a UI region only when the value driving
+ * that region actually changed. This keeps the icon from flashing black-then-color
+ * every 500 ms and prevents the pill / GPS rows from rewriting (and tearing)
+ * when there is nothing new to show.
  *
- * Call this instead of triggering a full display update whenever the Auto
- * screen is showing and only the status text has changed.
+ *   icon  → only when icon_color changes (motion state transition)
+ *   pill  → only when pill_text or pill_bg/fg changes (label or color change)
+ *   GPS   → only when fix or coords or sat-count changes
+ *
+ * Caller is welcome to invoke this at any cadence; it will cheaply early-out
+ * to an `if` per region when nothing to do.
  */
 void ui_update_auto_status_line_only(void) {
-    /* Status sits immediately below the scale-2 name (16 px) with a 2-px gap */
-    int status_y = g_layout.text_y + 18;
-    m5stickc_plus2_display_fill_rect(0, status_y, M5_LCD_H_RES, 10, M5_COLOR_BLACK);
+    /* Cached previous values so we can skip identical repaints. */
+    static bool        s_init = false;
+    static uint16_t    s_last_icon_color = 0;
+    static uint16_t    s_last_pill_bg = 0;
+    static uint16_t    s_last_pill_fg = 0;
+    static char        s_last_pill_text[24] = {0};
+    static bool        s_last_gps_fix = false;
+    static float       s_last_lat = 0.0f;
+    static float       s_last_lon = 0.0f;
+    static uint8_t     s_last_sats = 0xFFu;
 
-    uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
-    bool moving = motion_logic_is_moving();
-    char status_buf[12];
-    uint16_t status_color;
-    if (!moving) {
-        snprintf(status_buf, sizeof(status_buf), "Idle");
-        status_color = M5_COLOR_GREY;
-    } else if (countdown_sec > 0U) {
-        snprintf(status_buf, sizeof(status_buf), "%lu:%02lu",
-                 (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
-        status_color = M5_COLOR_YELLOW;
-    } else {
-        snprintf(status_buf, sizeof(status_buf), "Rec!");
-        status_color = M5_COLOR_GREEN;
+    char scratch[24];
+    auto_pill_info_t info;
+    auto_compute_pill(&info, scratch, sizeof(scratch));
+
+    /* Icon: erase + redraw only when color actually changed, or first-time call. */
+    if (!s_init || info.icon_color != s_last_icon_color) {
+        m5stickc_plus2_display_fill_rect(g_layout.icon_x, g_layout.icon_y,
+                                         32, 32, M5_COLOR_BLACK);
+        ui_draw_bitmap(g_layout.icon_x, g_layout.icon_y,
+                       screen_info[SCREEN_AUTO].icon, 32, 32, info.icon_color);
+        s_last_icon_color = info.icon_color;
     }
-    int status_w = ui_get_text_width(status_buf, 1);
-    m5stickc_plus2_display_print(g_layout.text_x - status_w / 2, status_y, status_buf, status_color);
+
+    /* Pill: redraw when label, bg, or fg color changed. */
+    if (!s_init
+            || info.pill_bg != s_last_pill_bg
+            || info.pill_fg != s_last_pill_fg
+            || strncmp(info.text, s_last_pill_text, sizeof(s_last_pill_text)) != 0) {
+        auto_draw_pill(&info);
+        s_last_pill_bg = info.pill_bg;
+        s_last_pill_fg = info.pill_fg;
+        strncpy(s_last_pill_text, info.text, sizeof(s_last_pill_text) - 1);
+        s_last_pill_text[sizeof(s_last_pill_text) - 1] = '\0';
+    }
+
+    /* GPS: redraw when fix transitions, coords change ≥0.0001°, or sat count changes. */
+    gps_data_t gps;
+    gps_get_data(&gps);
+    bool gps_changed = !s_init
+        || gps.has_fix != s_last_gps_fix
+        || gps.satellite_count != s_last_sats
+        || fabsf(gps.latitude  - s_last_lat) > 0.0001f
+        || fabsf(gps.longitude - s_last_lon) > 0.0001f;
+    if (gps_changed) {
+        auto_draw_gps_line();
+        s_last_gps_fix = gps.has_fix;
+        s_last_lat     = gps.latitude;
+        s_last_lon     = gps.longitude;
+        s_last_sats    = gps.satellite_count;
+    }
+
+    /* Belt-and-braces: keep the bottom-of-screen edge clean even on partial paths.
+     * 4 rows wipes both the literal last scanline and any nav-dot edge artifacts. */
+    m5stickc_plus2_display_fill_rect(0, M5_LCD_V_RES - 4,
+                                     M5_LCD_H_RES, 4, M5_COLOR_BLACK);
+
+    s_init = true;
 }
 
 /**
@@ -1055,8 +1243,11 @@ void ui_update_display(void) {
     for (int i = 0; i < SCREEN_COUNT; i++) {
         int x = g_layout.dots_start_x + (i * g_layout.dots_spacing);
         int y = g_layout.dots_y;
-        int dot_size = g_ui_state.is_plus2_device ? 8 : 6;
-        int inactive_size = g_ui_state.is_plus2_device ? 6 : 4;
+        /* Smaller dots — the previous 8/6 px squares packed in a tight row read as
+         * a continuous "white line at the bottom" from a distance. 5/3 px keeps
+         * them visible as page indicators without the line illusion. */
+        int dot_size = g_ui_state.is_plus2_device ? 5 : 4;
+        int inactive_size = g_ui_state.is_plus2_device ? 3 : 3;
         
         if (i == g_ui_state.current_screen) {
             /* Current screen - larger white rectangle */
@@ -1069,66 +1260,43 @@ void ui_update_display(void) {
     
     /* Get information for currently selected screen */
     const screen_info_t* screen = &screen_info[g_ui_state.current_screen];
-    
-    /* Icon — identical position on every screen */
-    ui_draw_bitmap(g_layout.icon_x, g_layout.icon_y, screen->icon, 32, 32, screen->color);
-
-    /* Screen name centred below icon (scale 2) */
-    int text_scale = 2;
-    int text_width = ui_get_text_width(screen->name, text_scale);
-    int centered_text_x = g_layout.text_x - (text_width / 2);
-    m5stickc_plus2_display_print_scaled(centered_text_x, g_layout.text_y,
-                                        screen->name, M5_COLOR_WHITE, text_scale);
 
     if (g_ui_state.current_screen == SCREEN_AUTO) {
-        /* GPS panel — three lines to the right of the icon, same vertical band */
-        gps_data_t gps;
-        gps_get_data(&gps);
-        int gps_x = g_layout.icon_x + 32 + 2;   /* 2 px gap after icon right edge */
-        int gps_y = g_layout.icon_y;              /* aligned with icon top          */
-        uint16_t gps_color = gps.has_fix ? M5_COLOR_WHITE : M5_COLOR_DARKGREY;
-        char gps_buf[16];
-        if (gps.has_fix) {
-            snprintf(gps_buf, sizeof(gps_buf), "Lat:%.3f", (double)gps.latitude);
-            m5stickc_plus2_display_print(gps_x, gps_y,      gps_buf, gps_color);
-            snprintf(gps_buf, sizeof(gps_buf), "Lon:%.3f", (double)gps.longitude);
-            m5stickc_plus2_display_print(gps_x, gps_y + 12, gps_buf, gps_color);
-            snprintf(gps_buf, sizeof(gps_buf), "Alti:%.0fm", (double)gps.altitude);
-            m5stickc_plus2_display_print(gps_x, gps_y + 24, gps_buf, gps_color);
-        } else {
-            m5stickc_plus2_display_print(gps_x, gps_y,      "Lat: --", gps_color);
-            m5stickc_plus2_display_print(gps_x, gps_y + 12, "Lon: --", gps_color);
-            m5stickc_plus2_display_print(gps_x, gps_y + 24, "Alti:--", gps_color);
-        }
+        /* AUTO is a status screen, not an action screen — uses a custom layout
+         * that drops the redundant "AUTO" text and uses the freed row for a
+         * full-width state pill (REC / WAITING / STOP m:ss). The icon itself
+         * is recolored to reflect motion state. */
+        char scratch[24];
+        auto_pill_info_t info;
+        auto_compute_pill(&info, scratch, sizeof(scratch));
 
-        /* Motion / recording status below name */
-        uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
-        bool moving = motion_logic_is_moving();
-        char status_buf[12];
-        uint16_t status_color;
-        if (!moving) {
-            snprintf(status_buf, sizeof(status_buf), "Idle");
-            status_color = M5_COLOR_GREY;
-        } else if (countdown_sec > 0U) {
-            snprintf(status_buf, sizeof(status_buf), "%lu:%02lu",
-                     (unsigned long)(countdown_sec / 60U), (unsigned long)(countdown_sec % 60U));
-            status_color = M5_COLOR_YELLOW;
-        } else {
-            snprintf(status_buf, sizeof(status_buf), "Rec!");
-            status_color = M5_COLOR_GREEN;
-        }
-        int status_y = g_layout.text_y + 18;
-        int status_w = ui_get_text_width(status_buf, 1);
-        m5stickc_plus2_display_print(g_layout.text_x - status_w / 2, status_y,
-                                     status_buf, status_color);
-
-        m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y,
-                                     "A:Tog    B:Next", M5_COLOR_GREY);
+        ui_draw_bitmap(g_layout.icon_x, g_layout.icon_y,
+                       screen->icon, 32, 32, info.icon_color);
+        auto_draw_pill(&info);
+        auto_draw_gps_line();
     } else {
-        m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y,
-                                     "A:Run    B:Next", M5_COLOR_GREY);
+        /* Action screens: icon + scale-2 name centered below it. */
+        ui_draw_bitmap(g_layout.icon_x, g_layout.icon_y, screen->icon, 32, 32, screen->color);
+
+        int text_scale = 2;
+        int text_width = ui_get_text_width(screen->name, text_scale);
+        int centered_text_x = g_layout.text_x - (text_width / 2);
+        m5stickc_plus2_display_print_scaled(centered_text_x, g_layout.text_y,
+                                            screen->name, M5_COLOR_WHITE, text_scale);
     }
-    
+
+    /* Display button instructions in top-left corner */
+    const char *instruct = (g_ui_state.current_screen == SCREEN_AUTO)
+        ? "A:Toggle  B:Next"
+        : "A:Run     B:Next";
+    m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y, instruct, M5_COLOR_GREY);
+
+    /* Belt-and-braces: explicitly clear the bottom 2 rows so any prior render
+     * (or panel-edge artifact from the ST7789 gap) can't leave a stray bright
+     * line at the very bottom of the screen. Clear 4 rows so we cover the bottom
+     * edge of any nav-dot leftovers as well as the literal last row. */
+    m5stickc_plus2_display_fill_rect(0, M5_LCD_V_RES - 4, M5_LCD_H_RES, 4, M5_COLOR_BLACK);
+
     g_ui_state.display_needs_update = false;
     ESP_LOGI(TAG, "Display updated - Screen: %s", screen->name);
 }
@@ -1523,7 +1691,7 @@ void ui_screen_sleep(void) {
  *
  * If recording is active: stop immediately and reset motion state to Idle.
  * If idle: switch to video mode, start recording, and set motion state to
- * Moving so the 5-minute stop countdown begins once the vehicle is still.
+ * Moving so the 2.5-minute stop countdown begins once the vehicle is still.
  */
 void ui_screen_auto(void) {
     connect_state_t state = connect_logic_get_state();
@@ -1533,20 +1701,25 @@ void ui_screen_auto(void) {
     }
 
     if (is_camera_recording()) {
-        ESP_LOGI(TAG, "Auto: manual stop");
+        ESP_LOGI(TAG, "Auto: manual stop → DISARM");
         (void)command_logic_stop_record();
         motion_logic_force_idle();
-        ui_show_message("Stopped", M5_COLOR_YELLOW, 800);
+        /* Disarm so motion can't immediately re-trigger start_record while the
+         * user is still holding the device (the IMU sees finger movement and
+         * would otherwise fire motion_just_started in ~300ms). */
+        motion_logic_set_armed(false);
     } else {
-        ESP_LOGI(TAG, "Auto: manual start");
+        ESP_LOGI(TAG, "Auto: manual start → ARM");
         (void)command_logic_switch_camera_mode(CAMERA_MODE_NORMAL);
         vTaskDelay(pdMS_TO_TICKS(200));
         (void)command_logic_start_record();
         motion_logic_force_active();
-        ui_show_message("Recording!", M5_COLOR_GREEN, 800);
+        motion_logic_set_armed(true);
     }
 
-    /* Partial status-line refresh — no full screen clear needed */
+    /* No toast — the pill itself (REC / WAITING / OFF / STOP m:ss) is the
+     * source of truth, and a flash-then-redraw on every button press just
+     * adds redraw flicker for a state the user can already see. */
     ui_update_auto_status_line_only();
 }
 

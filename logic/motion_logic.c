@@ -46,11 +46,11 @@
 #define MOTION_CONFIRM_SAMPLES      3U
 
 /* Duration of continuous quiet before declaring vehicle stopped (ms).
- * 1 = production (5 min), 0 = development (15 s).  See SPEC.md. */
+ * 1 = production (2.5 min), 0 = development (15 s).  See SPEC.md. */
 #ifndef MOTION_USE_PRODUCTION_TIMEOUT
 #define MOTION_USE_PRODUCTION_TIMEOUT  1
 #endif
-#define MOTION_STOP_TIMEOUT_MS  ((MOTION_USE_PRODUCTION_TIMEOUT) ? 300000UL : 15000UL)
+#define MOTION_STOP_TIMEOUT_MS  ((MOTION_USE_PRODUCTION_TIMEOUT) ? 150000UL : 15000UL)
 
 /* Interval between accelerometer reads, in ms (call motion_logic_update
  * at this rate from the main loop) */
@@ -68,6 +68,9 @@ static motion_state_t s_state          = MOTION_STATE_IDLE;
 static bool           s_imu_ok         = false;
 static bool           s_just_started   = false;
 static bool           s_just_stopped   = false;
+/* Default: armed. AUTO screen toggle flips this. Disarmed = motion telemetry
+ * still updates but app_main skips the start_record action on motion_just_started. */
+static bool           s_armed          = true;
 
 /* Consecutive above-threshold sample counter for start debounce */
 static uint32_t s_start_counter = 0U;
@@ -211,4 +214,17 @@ void motion_logic_force_active(void) {
     s_start_counter = 0U;
     /* Do NOT set s_just_started — caller handles the start command directly. */
     ESP_LOGI(TAG, "State forced → MOVING (manual button)");
+}
+
+void motion_logic_set_armed(bool armed) {
+    if (s_armed == armed) {
+        return;
+    }
+    s_armed = armed;
+    ESP_LOGI(TAG, "Auto-trigger %s", armed ? "ARMED" : "DISARMED");
+    ESP_LOGI("FLOW", "auto_armed=%d", armed ? 1 : 0);
+}
+
+bool motion_logic_is_armed(void) {
+    return s_armed;
 }

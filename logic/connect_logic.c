@@ -39,6 +39,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include <stdio.h>
 
 #include "ble.h"
 #include "data.h"
@@ -58,12 +60,31 @@
 /* Logging tag for ESP_LOG functions */
 #define TAG "LOGIC_CONNECT"
 
+static void connect_debug_log(const char *hypothesis_id,
+                              const char *location,
+                              const char *message,
+                              const char *data_json) {
+    static uint32_t seq = 0U;
+    char buf[256];
+    int64_t ts_ms = esp_timer_get_time() / 1000;
+    seq++;
+    snprintf(buf, sizeof(buf),
+             "{\"sessionId\":\"2204a3\",\"id\":\"log_%lld_%lu\",\"timestamp\":%lld,"
+             "\"location\":\"%s\",\"message\":\"%s\",\"data\":%s,"
+             "\"runId\":\"connect-pre\",\"hypothesisId\":\"%s\"}",
+             (long long)ts_ms, (unsigned long)seq, (long long)ts_ms,
+             location, message, data_json ? data_json : "{}", hypothesis_id);
+    printf("DBGJSON %s\n", buf);
+}
+
 /* Global connection state tracking
  * Manages the current state of BLE and protocol connections
  * Used throughout the system to determine available operations
  */
 static connect_state_t connect_state = BLE_NOT_INIT;
 static volatile bool s_unexpected_disconnect_pending = false;
+/** Prevents overlapping BLE connect + protocol work (startup + UI + background). */
+static volatile bool s_ble_connect_busy = false;
 
 /**
  * @brief Get current connection state
@@ -111,6 +132,12 @@ void receive_camera_disconnect_handler() {
         case PROTOCOL_CONNECTED:
         default: {
             /* Do not block the BLE callback task. Reconnection is handled elsewhere. */
+            char dbg_data[64];
+            snprintf(dbg_data, sizeof(dbg_data), "{\"state\":%d}", (int)connect_state);
+            // #region agent log: H4 unexpected_disconnect
+            connect_debug_log("H4", "connect_logic.c:unexpected_disconnect",
+                              "unexpected_disconnect", dbg_data);
+            // #endregion
             ESP_LOGW(TAG, "Unexpected disconnection from state: %d", connect_state);
             connect_state = BLE_INIT_COMPLETE;
             camera_status_initialized = false;
@@ -169,6 +196,20 @@ int connect_logic_ble_init() {
  * @return int Returns 0 on success, -1 on failure
  */
 int connect_logic_ble_connect(bool is_reconnecting) {
+    const char *fail_reason = NULL;
+    int fail_err = 0;
+    char dbg_data[120];
+
+    if (s_ble_connect_busy) {
+        ESP_LOGW(TAG, "BLE connect already in progress — ignored");
+        return -1;
+    }
+    if (connect_state == BLE_CONNECTED || connect_state == PROTOCOL_CONNECTED) {
+        ESP_LOGW(TAG, "Already connected — disconnect before a new BLE session");
+        return -1;
+    }
+    s_ble_connect_busy = true;
+
     connect_state = BLE_SEARCHING;
 
     esp_err_t ret;
@@ -177,13 +218,22 @@ int connect_logic_ble_connect(bool is_reconnecting) {
     ble_set_notify_callback(receive_camera_notify_handler);
     ble_set_state_callback(receive_camera_disconnect_handler);
 
+    snprintf(dbg_data, sizeof(dbg_data),
+             "{\"reconnecting\":%d,\"state\":%d}",
+             is_reconnecting ? 1 : 0, (int)connect_state);
+    // #region agent log: H2 ble_connect_start
+    connect_debug_log("H2", "connect_logic.c:ble_connect_start",
+                      "ble_connect_start", dbg_data);
+    // #endregion
+
     /* 2. Start scanning and attempt connection */
     ble_set_reconnecting(is_reconnecting);
     ret = ble_start_scanning_and_connect();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start scanning and connect, error: 0x%x", ret);
-        connect_state = BLE_INIT_COMPLETE;
-        return -1;
+        fail_reason = "scan_start";
+        fail_err = (int)ret;
+        goto connect_fail;
     }
 
     /* 3. Wait up to 10 seconds for the BLE connection to be established */
@@ -199,15 +249,15 @@ int connect_logic_ble_connect(bool is_reconnecting) {
     }
     if (!connected) {
         ESP_LOGW(TAG, "BLE connection timed out after %ums", BLE_WAIT_POLLS * BLE_POLL_INTERVAL_MS);
-        connect_state = BLE_INIT_COMPLETE;
-        return -1;
+        fail_reason = "connect_timeout";
+        goto connect_fail;
     }
 
     /* 4. Wait up to 10 seconds for GATT characteristic handle discovery to complete */
     ESP_LOGI(TAG, "Waiting up to %us for characteristic handle discovery...", (BLE_WAIT_POLLS * BLE_POLL_INTERVAL_MS) / 1000U);
     bool handles_found = false;
     for (uint32_t i = 0; i < BLE_WAIT_POLLS; i++) {
-        if (s_ble_profile.handle_discovery.notify_char_handle_found && 
+        if (s_ble_profile.handle_discovery.notify_char_handle_found &&
             s_ble_profile.handle_discovery.write_char_handle_found) {
             ESP_LOGI(TAG, "Required characteristic handles found");
             handles_found = true;
@@ -217,25 +267,45 @@ int connect_logic_ble_connect(bool is_reconnecting) {
     }
     if (!handles_found) {
         ESP_LOGW(TAG, "Characteristic handles not found within %ums timeout", BLE_WAIT_POLLS * BLE_POLL_INTERVAL_MS);
-        connect_state = BLE_INIT_COMPLETE;
-        return -1;
+        fail_reason = "handles_timeout";
+        goto connect_fail;
     }
 
     /* 5. Register notification */
     ret = ble_register_notify(s_ble_profile.conn_id, s_ble_profile.notify_char_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register notify, error: %s", esp_err_to_name(ret));
-        connect_state = BLE_INIT_COMPLETE;
-        return -1;
+        fail_reason = "notify_fail";
+        fail_err = (int)ret;
+        goto connect_fail;
     }
 
-    // Update state to BLE connected
+    /* Update state to BLE connected */
     connect_state = BLE_CONNECTED;
 
-    // Delay RGB light display
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    /* Short settle delay so LED / status updates can catch up (was 2000 ms; blocked main task). */
+    vTaskDelay(pdMS_TO_TICKS(400));
     ESP_LOGI(TAG, "BLE connect successfully");
+    snprintf(dbg_data, sizeof(dbg_data),
+             "{\"reconnecting\":%d}", is_reconnecting ? 1 : 0);
+    // #region agent log: H2 ble_connect_ok
+    connect_debug_log("H2", "connect_logic.c:ble_connect_ok",
+                      "ble_connect_ok", dbg_data);
+    // #endregion
+    s_ble_connect_busy = false;
     return 0;
+
+connect_fail:
+    connect_state = BLE_INIT_COMPLETE;
+    s_ble_connect_busy = false;
+    snprintf(dbg_data, sizeof(dbg_data),
+             "{\"reason\":\"%s\",\"err\":%d,\"reconnecting\":%d}",
+             fail_reason ? fail_reason : "unknown", fail_err, is_reconnecting ? 1 : 0);
+    // #region agent log: H2 ble_connect_fail
+    connect_debug_log("H2", "connect_logic.c:ble_connect_fail",
+                      "ble_connect_fail", dbg_data);
+    // #endregion
+    return -1;
 }
 
 /**
@@ -293,8 +363,20 @@ int connect_logic_ble_disconnect(void) {
 int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, const int8_t *mac_addr,
                                    uint32_t fw_version, uint8_t verify_mode, uint16_t verify_data,
                                    uint8_t camera_reserved) {
+    const char *result_reason = "unknown";
+    int result_code = 0;
+    char dbg_data[140];
+
     ESP_LOGI(TAG, "%s: Starting protocol connection", __FUNCTION__);
     uint16_t seq = generate_seq();
+
+    snprintf(dbg_data, sizeof(dbg_data),
+             "{\"verify_mode\":%u,\"verify_data\":%u}",
+             (unsigned)verify_mode, (unsigned)verify_data);
+    // #region agent log: H3 protocol_start
+    connect_debug_log("H3", "connect_logic.c:protocol_start",
+                      "protocol_start", dbg_data);
+    // #endregion
 
     /* Construct DJI protocol connection request frame */
     connection_request_command_frame connection_request = {
@@ -327,21 +409,24 @@ int connect_logic_protocol_connect(uint32_t device_id, uint8_t mac_addr_len, con
         esp_err_t ret = data_wait_for_result_by_cmd(0x00, 0x19, 5000, &received_seq, &parse_result, &parse_result_length);
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Timeout or error waiting for camera connection command, GOTO Failed.");
+            result_reason = "wait_cmd_timeout";
+            result_code = (int)ret;
             connect_logic_ble_disconnect();
-            return -1;
-        } else {
-            // If data is received, skip parsing camera response and directly enter STEP3
-            goto wait_for_camera_command;
+            goto protocol_fail;
         }
+        // If data is received, skip parsing camera response and directly enter STEP3
+        goto wait_for_camera_command;
     }
 
     // STEP2: Parse the response returned from camera
     connection_request_response_frame *response = (connection_request_response_frame *)result.structure;
     if (response->ret_code != 0) {
         ESP_LOGE(TAG, "Connection handshake failed: unexpected response from camera, ret_code: %d", response->ret_code);
+        result_reason = "handshake_ret";
+        result_code = response->ret_code;
         free(response);
         connect_logic_ble_disconnect();
-        return -1;
+        goto protocol_fail;
     }
 
     ESP_LOGI(TAG, "Handshake successful, waiting for the camera to actively send the connection command frame...");
@@ -356,8 +441,10 @@ wait_for_camera_command:
 
     if (ret != ESP_OK || parse_result == NULL) {
         ESP_LOGE(TAG, "Timeout or error waiting for camera connection command");
+        result_reason = "wait_cmd_timeout";
+        result_code = (int)ret;
         connect_logic_ble_disconnect();
-        return -1;
+        goto protocol_fail;
     }
 
     // Parse the connection request command sent by camera
@@ -365,9 +452,11 @@ wait_for_camera_command:
 
     if (camera_request->verify_mode != 2) {
         ESP_LOGE(TAG, "Unexpected verify_mode from camera: %d", camera_request->verify_mode);
+        result_reason = "verify_mode";
+        result_code = camera_request->verify_mode;
         free(parse_result);
         connect_logic_ble_disconnect();
-        return -1;
+        goto protocol_fail;
     }
 
     if (camera_request->verify_data == 0) {
@@ -391,13 +480,35 @@ wait_for_camera_command:
 
         ESP_LOGI(TAG, "Connection successfully established with camera.");
         free(parse_result);
-        return 0;
+        result_reason = "success";
+        result_code = 0;
+        goto protocol_success;
     } else {
         ESP_LOGW(TAG, "Camera rejected the connection, closing Bluetooth link...");
+        result_reason = "camera_reject";
+        result_code = camera_request->verify_data;
         free(parse_result);
         connect_logic_ble_disconnect();
-        return -1;
+        goto protocol_fail;
     }
+
+protocol_success:
+    snprintf(dbg_data, sizeof(dbg_data),
+             "{\"result\":\"%s\",\"code\":%d}", result_reason, result_code);
+    // #region agent log: H3 protocol_result
+    connect_debug_log("H3", "connect_logic.c:protocol_result",
+                      "protocol_result", dbg_data);
+    // #endregion
+    return 0;
+
+protocol_fail:
+    snprintf(dbg_data, sizeof(dbg_data),
+             "{\"result\":\"%s\",\"code\":%d}", result_reason, result_code);
+    // #region agent log: H3 protocol_result
+    connect_debug_log("H3", "connect_logic.c:protocol_result",
+                      "protocol_result", dbg_data);
+    // #endregion
+    return -1;
 }
 
 int connect_logic_ble_wakeup(void) {

@@ -26,6 +26,17 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
 # FreeRTOS
 CONFIG_FREERTOS_HZ=1000
+# Default 2048 overflowed during BLE scanning storms (every adv packet runs through
+# host callbacks / soft-timers). 4096 leaves headroom for esp_log formatting in BT paths.
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
+# BTC (callback) task default 3072 is also tight when scan-result handlers do any work.
+CONFIG_BT_BTC_TASK_STACK_SIZE=4096
 
 CONFIG_SPI_MASTER_ISR_IN_IRAM=y
-CONFIG_PM_ENABLE=y
+
+# BLE-only camera remote: Wi-Fi competes with BLE on the same 2.4 GHz radio on ESP32-S3.
+# Keeping Wi-Fi enabled has caused unstable BLE scanning/connecting in the field.
+CONFIG_ESP_WIFI_ENABLED=n
+
+# Light sleep / DFS can interfere with BLE link setup; this device has no battery sleep requirement in firmware.
+CONFIG_PM_ENABLE=n

@@ -10,6 +10,8 @@ import sys
 import glob
 import time
 
+DEBUG_LOG_PATH = "/Users/ntableman/Documents/GitHub/M5StickCPlus2_Remote_For_DJI_Osmo/.cursor/debug-2204a3.log"
+
 def find_port():
     patterns = [
         "/dev/cu.usbmodem*",  # ESP32-S3 USB-JTAG/serial CDC
@@ -38,7 +40,7 @@ def main():
         sys.exit(1)
     ser = serial.Serial(port, 115200, timeout=0.5)
     print(f"Capturing {duration}s from {port} -> {out_path}", file=sys.stderr)
-    with open(out_path, "w") as f:
+    with open(out_path, "w") as f, open(DEBUG_LOG_PATH, "a") as dbg_f:
         deadline = time.monotonic() + duration
         while time.monotonic() < deadline:
             try:
@@ -50,6 +52,13 @@ def main():
                 text = line.decode("utf-8", errors="replace")
                 f.write(text)
                 f.flush()
+                if "DBGJSON " in text:
+                    # Mirror structured debug payloads into the debug log file.
+                    idx = text.find("DBGJSON ")
+                    payload = text[idx + len("DBGJSON "):].strip()
+                    if payload:
+                        dbg_f.write(payload + "\n")
+                        dbg_f.flush()
     try:
         ser.close()
     except Exception:

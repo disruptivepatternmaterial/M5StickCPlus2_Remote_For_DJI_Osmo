@@ -67,4 +67,22 @@ int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az);
 #define M5_COLOR_DARKGREY   0x39C6
 #define M5_COLOR_GREY       0x7BEF
 
+/* ── Intent-named colors that actually render correctly on this panel ───────────
+ *
+ * The StickS3 LCD is configured with LCD_RGB_ELEMENT_ORDER_BGR, so any RGB565
+ * value we send has its R and B 5-bit fields swapped on screen. Many of the
+ * legacy M5_COLOR_* constants above were named for plain RGB565 (e.g.
+ * M5_COLOR_RED = 0xF800), which displays as BLUE here, and M5_COLOR_YELLOW
+ * = 0xF81F displays as MAGENTA. Earlier code worked around this by picking
+ * counter-named constants (e.g. using M5_COLOR_CYAN to get yellow GPS text).
+ *
+ * Use the M5_TRUE_* names below in new UI code so the symbol matches what the
+ * user actually sees, and the workaround stays out of feature code.
+ */
+#define M5_TRUE_RED         0x001F   /* B=31 source → displayed as R=31 (red) */
+#define M5_TRUE_GREEN       0x07E0   /* G=63, R=B=0 — symmetric, true green */
+#define M5_TRUE_BLUE        0xF800   /* R=31 source → displayed as B=31 (blue) */
+#define M5_TRUE_YELLOW      0x07FF   /* R=0,G=63,B=31 source → R=31,G=63,B=0 displayed */
+#define M5_TRUE_ORANGE      0x067F   /* approx R=200,G=140,B=0 displayed */
+
 #endif /* M5STICKS3_HAL_H */

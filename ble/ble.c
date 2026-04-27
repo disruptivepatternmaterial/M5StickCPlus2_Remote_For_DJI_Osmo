@@ -39,6 +39,7 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
@@ -55,6 +56,23 @@
 
 /* Logging tag for ESP_LOG functions */
 #define TAG "BLE"
+
+static void ble_debug_log(const char *hypothesis_id,
+                          const char *location,
+                          const char *message,
+                          const char *data_json) {
+    static uint32_t seq = 0U;
+    char buf[256];
+    int64_t ts_ms = esp_timer_get_time() / 1000;
+    seq++;
+    snprintf(buf, sizeof(buf),
+             "{\"sessionId\":\"2204a3\",\"id\":\"log_%lld_%lu\",\"timestamp\":%lld,"
+             "\"location\":\"%s\",\"message\":\"%s\",\"data\":%s,"
+             "\"runId\":\"connect-pre\",\"hypothesisId\":\"%s\"}",
+             (long long)ts_ms, (unsigned long)seq, (long long)ts_ms,
+             location, message, data_json ? data_json : "{}", hypothesis_id);
+    printf("DBGJSON %s\n", buf);
+}
 
 /* Target device name for connection attempts
  * Stores the BLE advertising name of the camera to connect to
@@ -79,7 +97,7 @@ static connect_logic_state_callback_t s_state_cb = NULL;
 /* Device scanning and selection parameters
  * Implements RSSI-based best device selection during scanning
  */
-#define MIN_RSSI_THRESHOLD -80          /* Minimum acceptable signal strength (-80 dBm) */
+#define MIN_RSSI_THRESHOLD -95          /* dBm; Osmo at arm's length can be weaker than -80 on some antennas */
 static esp_bd_addr_t best_addr = {0};   /* MAC address of device with strongest signal */
 static int8_t best_rssi = -128;         /* RSSI of best device (initialized to weakest possible) */
 static bool s_is_reconnecting = false;  /* True when attempting reconnection to known device */
@@ -266,7 +284,7 @@ esp_err_t ble_init() {
 
     /* Dedicated task for try_to_connect (avoids running from timer daemon / callback context) */
     if (s_connect_task_handle == NULL) {
-        BaseType_t created = xTaskCreate(connect_task, "ble_conn", 2048, NULL, 5, &s_connect_task_handle);
+        BaseType_t created = xTaskCreate(connect_task, "ble_conn", 4096, NULL, 5, &s_connect_task_handle);
         if (created != pdPASS) {
             s_connect_task_handle = NULL;
         }
@@ -545,30 +563,61 @@ void ble_set_state_callback(connect_logic_state_callback_t cb) {
  *   GAP & GATTC callback function implementation (simplified version)
  * ---------------------------------------------------------------- */
 
-/* Determine whether it is a DJI camera advertisement */
+/* DJI GATT service used after connect (same as REMOTE_TARGET_SERVICE_UUID). */
+#define DJI_ADV_SERVICE_UUID16 0xFFF0
+
+/* Legacy Osmo manufacturer AD (see DJI SDK / M5StickC reference builds). */
+static bool dji_adv_has_legacy_mfg(const uint8_t *data, uint8_t data_len) {
+    if (data_len >= 5U) {
+        if (data[0] == 0xAA && data[1] == 0x08 && data[4] == 0xFA) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Newer firmware often exposes 0xFFF0 in the 16-bit UUID list without the old mfg blob. */
+static bool dji_adv_has_service_uuid16(const uint8_t *data, uint8_t data_len, uint16_t uuid16) {
+    for (unsigned j = 0; j + 1U < data_len; j += 2U) {
+        uint16_t u = (uint16_t)(data[j] | (data[j + 1U] << 8));
+        if (u == uuid16) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Determine whether scan data looks like a DJI Osmo camera we can talk to. */
 static uint8_t bsp_link_is_dji_camera_adv(esp_ble_gap_cb_param_t *scan_result) {
     const uint8_t *ble_adv = scan_result->scan_rst.ble_adv;
     const uint8_t adv_len = scan_result->scan_rst.adv_data_len + scan_result->scan_rst.scan_rsp_len;
+    uint8_t match = 0U;
 
     for (int i = 0; i < adv_len; ) {
         const uint8_t len = ble_adv[i];
-        
-        if (len == 0 || (i + len + 1) > adv_len) break;
 
-        const uint8_t type = ble_adv[i+1];
-        const uint8_t *data = &ble_adv[i+2];
-        const uint8_t data_len = len - 1;
+        if (len == 0 || (i + len + 1) > adv_len) {
+            break;
+        }
+
+        const uint8_t type = ble_adv[i + 1];
+        const uint8_t *data = &ble_adv[i + 2];
+        const uint8_t data_len = (uint8_t)(len - 1);
 
         if (type == ESP_BLE_AD_MANUFACTURER_SPECIFIC_TYPE) {
-            if (data_len >= 5) {
-                if (data[0] == 0xAA && data[1] == 0x08 && data[4] == 0xFA) {
-                    return 1;
-                }
+            if (dji_adv_has_legacy_mfg(data, data_len)) {
+                match |= 0x01U;
+            }
+        }
+        /* Incomplete (0x02) or complete (0x03) list of 16-bit service class UUIDs */
+        if (type == 0x02 || type == 0x03) {
+            if (dji_adv_has_service_uuid16(data, data_len, DJI_ADV_SERVICE_UUID16)) {
+                match |= 0x02U;
             }
         }
         i += (len + 1);
     }
-    return 0;
+    return match;
 }
 
 static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
@@ -580,6 +629,20 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
 
     case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT: {
         ESP_LOGI(TAG, "scan stopped");
+        bool has_best = false;
+        for (int i = 0; i < ESP_BD_ADDR_LEN; i++) {
+            if (best_addr[i] != 0U) {
+                has_best = true;
+                break;
+            }
+        }
+        char dbg_data[96];
+        snprintf(dbg_data, sizeof(dbg_data),
+                 "{\"best_rssi\":%d,\"has_best\":%d,\"reconnecting\":%d}",
+                 (int)best_rssi, has_best ? 1 : 0, ble_get_reconnecting() ? 1 : 0);
+        // #region agent log: H1 scan_stop
+        ble_debug_log("H1", "ble.c:scan_stop", "scan_stop", dbg_data);
+        // #endregion
         if (ble_get_reconnecting()) {
             /* Reconnection: best_addr already set by ble_set_target_device; try connect without requiring s_found_previous_device */
             memcpy(s_deferred_connect_addr, best_addr, sizeof(esp_bd_addr_t));
@@ -615,7 +678,10 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     }
 
     case ESP_GAP_BLE_SCAN_RESULT_EVT: {
-        ESP_LOGI(TAG, "FLOW: GAP scan result evt");
+        /* DO NOT add ESP_LOGI here — this callback fires on EVERY advertising packet
+         * (often >100/s in noisy RF). Each ESP_LOGI formats on the BT host / Tmr Svc
+         * task stack and previously caused "stack overflow in task Tmr Svc" crashes
+         * after ~4s of scanning. Keep this path allocation- and log-free. */
         if (param == NULL) {
             break;
         }
@@ -627,8 +693,8 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         if (r->scan_rst.search_evt != ESP_GAP_SEARCH_INQ_RES_EVT) {
             break;
         }
-        ESP_LOGI(TAG, "FLOW: scan result inq_res, before bsp_link");
-        if (!bsp_link_is_dji_camera_adv(r)) {
+        uint8_t match_flags = bsp_link_is_dji_camera_adv(r);
+        if (match_flags == 0U) {
             break;
         }
 
@@ -657,6 +723,13 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
             r->scan_rst.rssi,
             r->scan_rst.bda[0], r->scan_rst.bda[1], r->scan_rst.bda[2],
             r->scan_rst.bda[3], r->scan_rst.bda[4], r->scan_rst.bda[5]);
+        char dbg_data[96];
+        snprintf(dbg_data, sizeof(dbg_data),
+                 "{\"rssi\":%d,\"match\":%u,\"has_name\":%d}",
+                 (int)r->scan_rst.rssi, (unsigned)match_flags, adv_name_len > 0 ? 1 : 0);
+        // #region agent log: H1 scan_match
+        ble_debug_log("H1", "ble.c:scan_match", "scan_match", dbg_data);
+        // #endregion
         if (r->scan_rst.rssi > best_rssi && r->scan_rst.rssi >= MIN_RSSI_THRESHOLD) {
             best_rssi = r->scan_rst.rssi;
             memcpy(best_addr, r->scan_rst.bda, sizeof(esp_bd_addr_t));

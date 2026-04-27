@@ -99,18 +99,13 @@ void app_main(void) {
         ESP_LOGI(TAG, "Light logic initialized");
     }
 
-    /* If the previous boot crashed, the phy_init partition may contain a
-     * partially-written or corrupted calibration record.  On the next boot
-     * phy_init detects the checksum failure, attempts to rewrite calibration,
-     * and crashes again — producing an unrecoverable boot loop.  Erase the
-     * phy_init partition now so the BLE stack starts fresh. */
+    /* PHY calibration corruption is plausible after brownout (under-voltage during BLE TX).
+     * Erasing phy_init + restart on *every* panic/WDT was causing a connect-crash → reboot loop:
+     * unrelated firmware faults looked like “PHY” issues and triggered endless restarts.
+     * Only recover PHY after brownout here. */
     esp_reset_reason_t reset_reason = esp_reset_reason();
-    if (reset_reason == ESP_RST_PANIC    ||
-        reset_reason == ESP_RST_INT_WDT  ||
-        reset_reason == ESP_RST_TASK_WDT ||
-        reset_reason == ESP_RST_WDT      ||
-        reset_reason == ESP_RST_BROWNOUT) {
-        ESP_LOGW(TAG, "Previous boot crashed (reason=%d) — erasing PHY calibration partition", (int)reset_reason);
+    if (reset_reason == ESP_RST_BROWNOUT) {
+        ESP_LOGW(TAG, "Brownout on previous boot — erasing PHY calibration partition");
         const esp_partition_t *phy_part = esp_partition_find_first(
             ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_PHY, NULL);
         if (phy_part != NULL) {
@@ -122,6 +117,12 @@ void app_main(void) {
                 ESP_LOGE(TAG, "PHY partition erase failed: %s", esp_err_to_name(erase_err));
             }
         }
+    } else if (reset_reason == ESP_RST_PANIC    ||
+               reset_reason == ESP_RST_INT_WDT  ||
+               reset_reason == ESP_RST_TASK_WDT ||
+               reset_reason == ESP_RST_WDT) {
+        ESP_LOGW(TAG, "Previous boot ended abnormally (reason=%d) — continuing without PHY erase",
+                 (int)reset_reason);
     }
 
     /* Initialize NVS before BLE — the ESP32 BLE stack requires NVS for PHY
@@ -293,9 +294,11 @@ void app_main(void) {
          * state machine.
          *
          * Flow:
-         *   motion starts → wake camera → BLE reconnect → switch to Video
+         *   motion starts → if disconnected: BLE wake + reconnect; switch to Video
          *                   mode → start recording
-         *   motion stops (5 min quiet) → stop recording → sleep camera
+         *   motion stops (2.5 min quiet) → stop recording (camera stays awake so
+         *                                   the next motion event can restart it
+         *                                   without the unreliable BLE-wake step)
          */
         s_motion_tick += 50U;
         if (s_motion_tick >= MOTION_UPDATE_INTERVAL_MS) {
@@ -303,13 +306,19 @@ void app_main(void) {
             motion_logic_update();
 
             if (motion_logic_just_started()) {
-                ESP_LOGI(TAG, "Motion detected - initiating recording sequence");
-                ESP_LOGI("FLOW", "motion_just_started → want_record=1");
-                s_want_record = true;
-                /* Wake camera if it is sleeping / disconnected */
-                if (connect_logic_get_state() < PROTOCOL_CONNECTED) {
-                    (void)connect_logic_ble_wakeup();
-                    (void)ui_attempt_background_reconnection();
+                if (motion_logic_is_armed()) {
+                    ESP_LOGI(TAG, "Motion detected - initiating recording sequence");
+                    ESP_LOGI("FLOW", "motion_just_started → want_record=1");
+                    s_want_record = true;
+                    /* Wake camera if it is sleeping / disconnected */
+                    if (connect_logic_get_state() < PROTOCOL_CONNECTED) {
+                        (void)connect_logic_ble_wakeup();
+                        (void)ui_attempt_background_reconnection();
+                    }
+                } else {
+                    /* Disarmed: respect the user's manual stop. Don't start recording,
+                     * but the IMU state machine still tracks moving/stopped for telemetry. */
+                    ESP_LOGI("FLOW", "motion_just_started ignored (auto disarmed)");
                 }
             }
 
@@ -325,12 +334,19 @@ void app_main(void) {
                 s_is_recording = true;
             }
 
-            if (motion_logic_just_stopped() && (s_is_recording || is_camera_recording())) {
-                ESP_LOGI("FLOW", "motion_stopped → stop_record");
+            /* Auto-stop on quiet timeout: stop recording but keep BLE link + camera awake.
+             *
+             * Why we deliberately do NOT call power_mode_switch_sleep() here:
+             *   The DJI Osmo Action does not reliably wake from BLE-only after a
+             *   sleep command — the camera enters a deep state and only a physical
+             *   button press resumes BLE responsiveness. For a motion-triggered
+             *   dashcam this would brick auto-restart on the next bump. So we
+             *   accept the small extra battery cost and keep the camera awake.
+             *   See SPEC.md "Auto recording" section. */
+            if (motion_logic_is_armed() && motion_logic_just_stopped()
+                    && (s_is_recording || is_camera_recording())) {
+                ESP_LOGI("FLOW", "motion_stopped → stop_record (camera stays awake)");
                 (void)command_logic_stop_record();
-                vTaskDelay(pdMS_TO_TICKS(500));
-                ESP_LOGI("FLOW", "sleep");
-                (void)command_logic_power_mode_switch_sleep();
                 s_is_recording = false;
             }
         }
@@ -339,9 +355,11 @@ void app_main(void) {
         s_flow_tick += 50U;
         if (s_flow_tick >= FLOW_LOG_INTERVAL_MS) {
             s_flow_tick = 0U;
-            ESP_LOGI("FLOW", "state conn=%d screen=%d moving=%d want_rec=%d is_rec=%d pending_mode=%d",
+            ESP_LOGI("FLOW", "state conn=%d screen=%d armed=%d moving=%d want_rec=%d local_rec=%d cam_rec=%d pending_mode=%d",
                      (int)connect_logic_get_state(), (int)g_ui_state.current_screen,
+                     motion_logic_is_armed() ? 1 : 0,
                      motion_logic_is_moving() ? 1 : 0, s_want_record ? 1 : 0, s_is_recording ? 1 : 0,
+                     is_camera_recording() ? 1 : 0,
                      g_pending_set_video_mode_after_connect ? 1 : 0);
         }
 
@@ -349,7 +367,8 @@ void app_main(void) {
          * GPS TELEMETRY PUSH
          * Send GPS data to camera once per second when connected and fix is valid.
          * Camera embeds the data into video metadata (satellite_number must be > 0).
-         * No-op while the GPS placeholder is active (gps_has_fix() returns false).
+         * year_month_day / hour_minute_second must be non-zero for Osmo to accept samples
+         * (see dji-sdk/Osmo-GPS-Controller-Demo `gps_push_data`, CmdSet 0x00 / CmdID 0x17).
          */
         s_gps_tick += 50U;
         if (s_gps_tick >= GPS_PUSH_INTERVAL_MS) {
@@ -360,8 +379,8 @@ void app_main(void) {
 
                 float course_rad = gps.course * (float)(3.14159265358979f / 180.0f);
                 gps_data_push_command_frame_t frame = {
-                    .year_month_day       = 0,        /* TODO: fill from RTC or GPS when available */
-                    .hour_minute_second   = 0,
+                    .year_month_day       = gps.year_month_day,
+                    .hour_minute_second   = gps.hour_minute_second,
                     .gps_longitude        = (int32_t)(gps.longitude * 1e7f),
                     .gps_latitude         = (int32_t)(gps.latitude  * 1e7f),
                     .height               = (int32_t)(gps.altitude  * 1000.0f),
@@ -373,7 +392,22 @@ void app_main(void) {
                     .speed_accuracy       = 0.1f,
                     .satellite_number     = gps.satellite_count,
                 };
-                command_logic_push_gps_data(&frame);
+                // #region agent log
+                {
+                    static uint32_t s_gps_meta_log_ms;
+                    s_gps_meta_log_ms += GPS_PUSH_INTERVAL_MS;
+                    if (s_gps_meta_log_ms >= 10000U) {
+                        s_gps_meta_log_ms = 0U;
+                        ESP_LOGI("DBG_GPS", "H1 ymd=%ld hms=%ld sats=%u lon_e7=%ld lat_e7=%ld",
+                                 (long)frame.year_month_day, (long)frame.hour_minute_second,
+                                 (unsigned)frame.satellite_number,
+                                 (long)frame.gps_longitude, (long)frame.gps_latitude);
+                    }
+                }
+                // #endregion
+                if (gps.year_month_day > 0 && gps.hour_minute_second > 0) {
+                    command_logic_push_gps_data(&frame);
+                }
             }
         }
 
@@ -391,27 +425,71 @@ void app_main(void) {
          */
         if (g_ui_state.current_screen == SCREEN_AUTO) {
             static bool s_auto_last_moving = false;
+            static bool s_auto_last_armed = true;
             static uint32_t s_auto_last_countdown_sec = 0U;
+            static bool s_auto_last_recording = false;
             s_auto_tick += 50U;
             if (s_auto_tick >= AUTO_SAMPLE_INTERVAL_MS) {
                 s_auto_tick = 0U;
                 bool moving = motion_logic_is_moving();
+                bool armed = motion_logic_is_armed();
                 uint32_t countdown_sec = motion_logic_get_stop_countdown_sec_remaining();
-                if (moving != s_auto_last_moving || countdown_sec != s_auto_last_countdown_sec) {
+                bool recording = is_camera_recording();
+                /* Recording state is now part of the pill (REC vs WAITING comes
+                 * from the camera, not the IMU), so a change there must trigger
+                 * a refresh too. */
+                if (moving != s_auto_last_moving
+                        || armed != s_auto_last_armed
+                        || countdown_sec != s_auto_last_countdown_sec
+                        || recording != s_auto_last_recording) {
                     s_auto_last_moving = moving;
+                    s_auto_last_armed = armed;
                     s_auto_last_countdown_sec = countdown_sec;
-                    /* Only redraw the status line — not the whole screen — to avoid flicker */
+                    s_auto_last_recording = recording;
                     ui_update_auto_status_line_only();
-                    ESP_LOGI("FLOW", "auto_status moving=%d countdown=%lu", moving ? 1 : 0, (unsigned long)countdown_sec);
+                    ESP_LOGI("FLOW", "auto_status armed=%d moving=%d rec=%d countdown=%lu",
+                             armed ? 1 : 0, moving ? 1 : 0, recording ? 1 : 0,
+                             (unsigned long)countdown_sec);
                 }
             }
         }
-        /* Redraw whenever connection state changes so the status square updates */
+        /* Redraw whenever connection state changes so the status square updates.
+         *
+         * On the rising edge into PROTOCOL_CONNECTED (initial connect or reconnect)
+         * also kick off the dashcam flow automatically: jump to the AUTO screen,
+         * arm motion detection, switch the camera to Video mode, and start
+         * recording. The user shouldn't have to remember to press Start every
+         * time — the whole point of AUTO is hands-off capture. The 2.5-min
+         * motion-quiet timeout still owns when recording stops. */
         {
             connect_state_t curr_conn = connect_logic_get_state();
             if (curr_conn != s_last_conn_state) {
+                bool just_connected = (curr_conn == PROTOCOL_CONNECTED
+                                       && s_last_conn_state != PROTOCOL_CONNECTED);
                 s_last_conn_state = curr_conn;
                 g_ui_state.display_needs_update = true;
+
+                if (just_connected) {
+                    ESP_LOGI("FLOW", "PROTOCOL_CONNECTED → auto-jump to AUTO + start recording");
+                    g_ui_state.current_screen = SCREEN_AUTO;
+
+                    /* Treat the moment of connect as "moving" so the stop countdown
+                     * doesn't fire immediately on a still device — it'll only count
+                     * down once the IMU has been quiet for the full timeout. */
+                    motion_logic_force_active();
+                    motion_logic_set_armed(true);
+
+                    if (!is_camera_recording()) {
+                        (void)command_logic_switch_camera_mode(CAMERA_MODE_NORMAL);
+                        vTaskDelay(pdMS_TO_TICKS(200));
+                        ESP_LOGI("FLOW", "auto_on_connect → start_record");
+                        (void)command_logic_start_record();
+                        s_is_recording = true;
+                    } else {
+                        ESP_LOGI("FLOW", "auto_on_connect: camera already recording, skipping start");
+                        s_is_recording = true;
+                    }
+                }
             }
         }
 
