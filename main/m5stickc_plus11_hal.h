@@ -55,6 +55,27 @@ void m5stickc_plus2_display_fill_circle(int x, int y, int radius, uint16_t color
 void m5stickc_plus2_display_fill_rect(int x, int y, int width, int height, uint16_t color);
 
 /**
+ * @brief Initialize the onboard piezo buzzer (GPIO M5_BUZZER_PIN).
+ * @return ESP_OK on success, ESP_ERR_* on failure
+ */
+int m5stickc_plus2_buzzer_init(void);
+
+/**
+ * @brief Play a single non-blocking beep.
+ * @param freq_hz     Tone frequency in Hz (clamped to 50–8000).
+ * @param duration_ms Tone duration in milliseconds (clamped to 1–500).
+ */
+void m5stickc_plus2_buzzer_beep(uint16_t freq_hz, uint16_t duration_ms);
+
+/**
+ * @brief Play two short beeps separated by a gap (non-blocking).
+ * @param freq_hz     Tone frequency in Hz (clamped to 50–8000).
+ * @param duration_ms Per-beep duration in milliseconds (clamped to 1–500).
+ * @param gap_ms      Gap between the two beeps in milliseconds (clamped to 1–500).
+ */
+void m5stickc_plus2_buzzer_beep_double(uint16_t freq_hz, uint16_t duration_ms, uint16_t gap_ms);
+
+/**
  * @brief Initialize MPU6886 6-axis IMU
  *
  * Wakes the chip from sleep, configures accelerometer to ±8g range,

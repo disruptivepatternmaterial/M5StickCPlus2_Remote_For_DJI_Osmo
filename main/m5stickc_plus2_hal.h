@@ -174,6 +174,41 @@ void m5stickc_plus2_display_fill_circle(int x, int y, int radius, uint16_t color
 void m5stickc_plus2_display_fill_rect(int x, int y, int width, int height, uint16_t color);
 
 /**
+ * @brief Initialize the onboard piezo buzzer (GPIO M5_BUZZER_PIN).
+ *
+ * Configures a dedicated LEDC timer/channel separate from the backlight
+ * PWM so the two cannot interfere. Safe to call after display init.
+ *
+ * @return ESP_OK on success, ESP_ERR_* on failure
+ */
+int m5stickc_plus2_buzzer_init(void);
+
+/**
+ * @brief Play a single non-blocking beep.
+ *
+ * Returns immediately; an internal esp_timer turns the tone off after
+ * @p duration_ms. Calling again before the previous beep finishes will
+ * cancel the in-flight beep and start a new one. Safe to call from any
+ * task context (NOT from ISR / BLE callback).
+ *
+ * @param freq_hz     Tone frequency in Hz (clamped to 50–8000).
+ * @param duration_ms Tone duration in milliseconds (clamped to 1–500).
+ */
+void m5stickc_plus2_buzzer_beep(uint16_t freq_hz, uint16_t duration_ms);
+
+/**
+ * @brief Play two short beeps separated by a gap (non-blocking).
+ *
+ * Useful for "unexpected disconnect" cues that need to stand out from a
+ * single short beep. Cancels any in-flight beep first.
+ *
+ * @param freq_hz     Tone frequency in Hz (clamped to 50–8000).
+ * @param duration_ms Per-beep duration in milliseconds (clamped to 1–500).
+ * @param gap_ms      Gap between the two beeps in milliseconds (clamped to 1–500).
+ */
+void m5stickc_plus2_buzzer_beep_double(uint16_t freq_hz, uint16_t duration_ms, uint16_t gap_ms);
+
+/**
  * @brief Initialize MPU6886 6-axis IMU
  *
  * Wakes the chip from sleep, configures accelerometer to ±8g range,

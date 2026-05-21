@@ -16,38 +16,15 @@ Motion-triggered dashcam remote for DJI Osmo Action cameras via BLE.
 | Trigger | Action |
 |---------|--------|
 | Motion detected | If not connected: BLE wake + reconnect. Once connected: **set Video mode (0x01)** → short delay → **start recording**. |
-| Still for timeout | **Stop recording**. Camera is **kept awake** (not put to BLE sleep) so the next motion event can restart recording immediately. |
+| Still for timeout | **Stop recording** → short delay → **sleep camera**. |
 
-Sequence: wake (if needed) → set mode → shutter start → … → shutter stop → (idle, link kept alive) → next motion → set mode → shutter start.
-
-> ⚠️ **Why we don't sleep the camera on motion timeout:** the Osmo Action does not
-> reliably wake from a BLE-only request after `power_mode = 0x03` (sleep) — once
-> asleep it requires a physical button press, which would defeat motion-triggered
-> auto-restart. Manual sleep is still available from the SLEEP screen.
+Sequence: wake (if needed) → set mode → shutter start → … → shutter stop → sleep.
 
 ## Camera Mode
 
 - Protocol value: `0x01` (Video).
 - In code: `CAMERA_MODE_NORMAL` (see `logic/enums_logic.h`).
 - Sent via `command_logic_switch_camera_mode(CAMERA_MODE_NORMAL)` before `command_logic_start_record()`.
-
-## Required Camera Setup
-
-The firmware can start/stop recording and switch the camera into Video mode, but it cannot
-configure the camera's storage behavior over BLE. Configure these once on the camera before
-using the remote as a dashcam:
-
-- **Loop Recording**: enabled. This is required for unattended dashcam use; normal Video mode
-  eventually fills the card and the camera reports **Insufficient Storage**.
-- **Loop segment length**: 3-5 minutes. Shorter segments are easier to copy, recover, and overwrite.
-- **Pre-Rec**: disabled unless there is a specific reason to keep it. It increases storage pressure.
-- **Storage target**: microSD card. On models with internal storage, do not rely on internal storage
-  for unattended dashcam recording.
-- **microSD card**: UHS-I U3 / V30 or better, preferably 256 GB or 512 GB from DJI's recommended list.
-- **Format**: format the card in the camera after offloading anything important.
-- **Codec**: use Efficiency / HEVC if the NAS and playback tools support it; it reduces file size.
-- **Resolution / frame rate**: start with 4K/30 or 1080p/30 while validating the setup. Higher frame
-  rates fill storage faster and increase heat.
 
 **Shooting parameters** (sent by this firmware where the DJI BLE protocol allows):
 
@@ -82,34 +59,14 @@ via the 0x1D:0x02 status push. There is no BLE command to set them remotely.
 - **Sensor**: MPU6886 (M5StickC Plus / Plus 1.1) or BMI270 (M5 StickS3) via HAL — `m5stickc_plus2_imu_init()`, `m5stickc_plus2_imu_read_accel()`.
 - **Logic**: `logic/motion_logic.c` — states IDLE / MOVING / COUNTDOWN.
 - **API**: `motion_logic_just_started()` / `motion_logic_just_stopped()` drive `app_main.c`.
-- **Timeout**: configurable; 15 s for testing, 2.5 min for production.
+- **Timeout**: configurable; 15 s for testing, 5 min for production.
 
 ## GPS
 
 - **M5StickC Plus / Plus 1.1**: Placeholder stub returning fixed Switzerland coordinates.
   `gps_has_fix()` → true, `gps_get_data()` → stub coords.
-- **M5 StickS3 + Unit GPS v1.1**: Real UART/NMEA on Grove PORT.A (ESP TX→Yellow G9, ESP RX←White G10), 115200 8N1 default. Firmware auto-falls back to 9600 if no NMEA `$` is seen within 4 s (older Unit GPS / re-flashed modules). `gps_has_fix()` / `gps_get_data()` reflect parsed GGA/RMC when a fix is present.
+- **M5 StickS3 + Unit GPS v1.1**: Real UART/NMEA on Grove PORT.A (ESP TX→Yellow G9, ESP RX←White G10), 115200 8N1. `gps_has_fix()` / `gps_get_data()` reflect parsed GGA/RMC when a fix is present.
 - **Push**: Every 1 s when connected and fix available, via `command_logic_push_gps_data()` (CmdSet 0x00, CmdID 0x17).
-
-## Footage Offload
-
-Video files are not transferred over the BLE protocol used by this firmware. BLE is used for
-control commands and GPS metadata push only.
-
-Supported offload paths:
-
-- **Camera loop recording**: primary storage-management strategy. The camera overwrites old
-  loop segments locally so unattended recording does not stop with **Insufficient Storage**.
-- **USB file transfer**: power on the camera, connect USB-C, choose **Transfer File / USB Transfer**
-  on the camera, then copy `DCIM` to the NAS from the attached computer. The camera cannot
-  record while transferring files.
-- **microSD card reader**: fastest and most reliable bulk import path. Remove the card and import
-  from a reader attached to the NAS or a computer.
-- **DJI Mimo / phone bridge**: download in DJI Mimo or via Android USB/OTG, then sync the phone
-  folder to the NAS with a separate sync tool.
-- **Native NAS upload**: only consider this if the specific camera model and current DJI Mimo app
-  expose a Camera Cloud Service / NAS / SMB feature. This is model- and app-version-dependent and
-  is not controlled by this firmware.
 
 ## Auto Start/Stop Screen
 
@@ -121,10 +78,8 @@ Supported offload paths:
 ## Summary Checklist
 
 - [ ] Motion: MPU6886 → motion_logic → `just_started` / `just_stopped` drive app_main.
-- [ ] Flow: wake/connect if needed → set Video (0x01) → start record; on still timeout → stop record and keep camera awake.
+- [ ] Flow: wake → set Video (0x01) → start record; on still timeout → stop record → sleep.
 - [ ] Mode: `CAMERA_MODE_NORMAL` (0x01) sent before start record.
-- [ ] Camera setup: Loop Recording enabled on camera; normal Video mode is not acceptable for unattended dashcam use.
-- [ ] Offload: video files are copied by USB, card reader, phone bridge, or model-specific native NAS upload — not by BLE.
 - [ ] GPS: Plus builds use stub; StickS3 uses NMEA from Unit GPS v1.1; push when connected.
 - [ ] Auto screen: status line (idle / moving / still–countdown); default after connect; no excessive redraws.
 

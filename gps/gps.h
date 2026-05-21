@@ -36,7 +36,7 @@ typedef struct {
     float    altitude;        /* Metres above sea level            */
     float    speed;           /* Ground speed in m/s               */
     float    course;          /* Course over ground, 0-360 degrees */
-    uint8_t  satellite_count; /* Satellites in view                */
+    uint32_t satellite_count; /* Satellites in view (uint32 to match DJI 0x00:0x17 wire field) */
     bool     has_fix;         /* Valid GPS fix available           */
     int32_t  year_month_day;  /* YYYYMMDD for DJI Cmd 0x00:0x17, 0 until RMC date seen */
     int32_t  hour_minute_second; /* HHMMSS UTC for same command, 0 until GGA/RMC time seen */

@@ -127,18 +127,25 @@ typedef struct __attribute__((packed)) {
  *   satellite_number    must be > 0 for camera to embed GPS in video metadata
  */
 typedef struct __attribute__((packed)) {
-    int32_t year_month_day;
-    int32_t hour_minute_second;
-    int32_t gps_longitude;
-    int32_t gps_latitude;
-    int32_t height;
-    float   speed_to_north;
-    float   speed_to_east;
-    float   speed_to_wnward;
-    float   vertical_accuracy;
-    float   horizontal_accuracy;
-    float   speed_accuracy;
-    uint8_t satellite_number;
+    int32_t  year_month_day;
+    int32_t  hour_minute_second;     /* DJI convention: (UTC_hour+8)*10000 + min*100 + sec */
+    int32_t  gps_longitude;          /* deg * 1e7 */
+    int32_t  gps_latitude;           /* deg * 1e7 */
+    int32_t  height;                 /* mm above MSL */
+    float    speed_to_north;         /* cm/s */
+    float    speed_to_east;          /* cm/s */
+    float    speed_to_wnward;        /* cm/s downward (DJI source spelling preserved) */
+    uint32_t vertical_accuracy;      /* mm   — NOT float; DJI canonical type */
+    uint32_t horizontal_accuracy;    /* mm   — NOT float; DJI canonical type */
+    uint32_t speed_accuracy;         /* cm/s — NOT float; DJI canonical type */
+    uint32_t satellite_number;       /* must be > 0 for camera to embed GPS in video metadata */
 } gps_data_push_command_frame_t;
+
+/* Wire-format guard: the DJI Osmo Action camera silently drops 0x00:0x17 frames
+ * whose payload isn't exactly 48 bytes. Catch any future struct drift at compile
+ * time. Reference: dji-sdk/Osmo-GPS-Controller-Demo/protocol/dji_protocol_data_structures.h
+ * and test/test_gps.c (decoded payload = 48 B). */
+_Static_assert(sizeof(gps_data_push_command_frame_t) == 48,
+               "gps_data_push_command_frame_t must be exactly 48 bytes (DJI R SDK wire format)");
 
 #endif

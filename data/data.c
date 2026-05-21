@@ -425,8 +425,16 @@ void data_init(void) {
     }
 
     // Initialize notification task
-    // Increased stack size to 4096 to prevent stack overflow during notification processing
-    if (xTaskCreate(notify_processing_task, "notify_processing_task", 4096, NULL, 1, &notify_task_handle) != pdPASS) {
+    // Stack 4096 (sized for protocol parse + status callback fanout).
+    // Priority bumped from 1 to 4: at priority 1 the task was below
+    // gpio_monitor (10) and ble_conn (5), so under load (e.g. while a
+    // worker task held the CPU during a connect attempt) the 2 Hz status
+    // notifications could back up in notify_queue and starve
+    // data_wait_for_result_by_seq, making BLE round-trip timeouts more
+    // likely than the underlying link warranted. Priority 4 keeps it
+    // below ble_conn (5) and gpio_monitor (10) but ahead of the main
+    // task (default 1) so status data drains promptly.
+    if (xTaskCreate(notify_processing_task, "notify_processing_task", 4096, NULL, 4, &notify_task_handle) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create notification processing task");
     }
 
@@ -847,23 +855,14 @@ static void process_notification_data(const uint8_t *raw_data, size_t raw_data_l
 
     // Check frame header
     if (raw_data[0] == 0xAA || raw_data[0] == 0xaa) {
-        ESP_LOGI(TAG, "Notification received, attempting to parse...");
+        /* Removed: per-frame colorized RX hex printf. At PUSH_FREQ_2HZ this
+         * was hundreds of bytes/sec of UART output competing for the
+         * console mutex with ESP_LOGI, which back-pressured the calling
+         * task and contributed to perceived stutter. ESP_LOG_BUFFER_HEX
+         * remains available (commented above) for ad-hoc protocol
+         * debugging; do not re-enable it on shipping firmware. */
+        ESP_LOGD(TAG, "Notification received (len=%u), attempting to parse...", (unsigned)raw_data_length);
 
-        // ESP_LOG_BUFFER_HEX(TAG, raw_data, raw_data_length);  // Print notification content
-
-        // Print notification content in pink color
-        printf("\033[95m");
-        printf("RX: [");
-        for (size_t i = 0; i < raw_data_length; i++) {
-            printf("%02X", raw_data[i]);
-            if (i < raw_data_length - 1) {
-                printf(", ");
-            }
-        }
-        printf("]\n");
-        printf("\033[0m");
-        printf("\033[0;32m");
-                                                             
         // Define parsing result structure
         protocol_frame_t frame;
         memset(&frame, 0, sizeof(frame));

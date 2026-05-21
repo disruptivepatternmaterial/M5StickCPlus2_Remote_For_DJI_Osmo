@@ -376,35 +376,35 @@ void app_main(void) {
             if (gps_has_fix() && connect_logic_get_state() == PROTOCOL_CONNECTED) {
                 gps_data_t gps;
                 gps_get_data(&gps);
+                /* DJI R SDK 0x00:0x17 expects (UTC_hour+8)*10000 + min*100 + sec.
+                 * Source of truth: dji-sdk/Osmo-GPS-Controller-Demo logic/gps_logic.c
+                 * line 518 — `(GPS_Data.Hour + 8) * 10000 + Minute * 100 + Second`.
+                 * No date-rollover handling — match the demo exactly so the camera's
+                 * sample-acceptance path sees the same shape it does from the reference
+                 * controller. gps.hour_minute_second is raw UTC HHMMSS. */
+                int32_t utc_hh = gps.hour_minute_second / 10000;
+                int32_t utc_mm = (gps.hour_minute_second / 100) % 100;
+                int32_t utc_ss = gps.hour_minute_second % 100;
+                int32_t hms_dji = (utc_hh + 8) * 10000 + utc_mm * 100 + utc_ss;
 
                 float course_rad = gps.course * (float)(3.14159265358979f / 180.0f);
                 gps_data_push_command_frame_t frame = {
                     .year_month_day       = gps.year_month_day,
-                    .hour_minute_second   = gps.hour_minute_second,
+                    .hour_minute_second   = hms_dji,
                     .gps_longitude        = (int32_t)(gps.longitude * 1e7f),
                     .gps_latitude         = (int32_t)(gps.latitude  * 1e7f),
                     .height               = (int32_t)(gps.altitude  * 1000.0f),
                     .speed_to_north       = gps.speed * cosf(course_rad) * 100.0f,
                     .speed_to_east        = gps.speed * sinf(course_rad) * 100.0f,
                     .speed_to_wnward      = 0.0f,
-                    .vertical_accuracy    = 3.0f,
-                    .horizontal_accuracy  = 3.0f,
-                    .speed_accuracy       = 0.1f,
+                    /* Accuracies are uint32 in DJI's wire format, NOT float.
+                     * Units: mm (vert/horiz), cm/s (speed). Matches reference values
+                     * from Osmo-GPS-Controller-Demo logic/gps_logic.c lines 566–571. */
+                    .vertical_accuracy    = 1000u,
+                    .horizontal_accuracy  = 1000u,
+                    .speed_accuracy       = 10u,
                     .satellite_number     = gps.satellite_count,
                 };
-                // #region agent log
-                {
-                    static uint32_t s_gps_meta_log_ms;
-                    s_gps_meta_log_ms += GPS_PUSH_INTERVAL_MS;
-                    if (s_gps_meta_log_ms >= 10000U) {
-                        s_gps_meta_log_ms = 0U;
-                        ESP_LOGI("DBG_GPS", "H1 ymd=%ld hms=%ld sats=%u lon_e7=%ld lat_e7=%ld",
-                                 (long)frame.year_month_day, (long)frame.hour_minute_second,
-                                 (unsigned)frame.satellite_number,
-                                 (long)frame.gps_longitude, (long)frame.gps_latitude);
-                    }
-                }
-                // #endregion
                 if (gps.year_month_day > 0 && gps.hour_minute_second > 0) {
                     command_logic_push_gps_data(&frame);
                 }
@@ -460,17 +460,26 @@ void app_main(void) {
          * arm motion detection, switch the camera to Video mode, and start
          * recording. The user shouldn't have to remember to press Start every
          * time — the whole point of AUTO is hands-off capture. The 2.5-min
-         * motion-quiet timeout still owns when recording stops. */
+         * motion-quiet timeout still owns when recording stops.
+         *
+         * Audible cues (see SPEC.md "Audible Cues"):
+         *   connect           → single high beep (2500 Hz / 60 ms)
+         *   clean disconnect  → single low beep  (700 Hz / 80 ms)
+         *   The unexpected-disconnect double beep fires below from the
+         *   consume-flag path so the cue stays distinct from a manual drop. */
         {
             connect_state_t curr_conn = connect_logic_get_state();
             if (curr_conn != s_last_conn_state) {
                 bool just_connected = (curr_conn == PROTOCOL_CONNECTED
                                        && s_last_conn_state != PROTOCOL_CONNECTED);
+                bool just_disconnected = (s_last_conn_state == PROTOCOL_CONNECTED
+                                          && curr_conn != PROTOCOL_CONNECTED);
                 s_last_conn_state = curr_conn;
                 g_ui_state.display_needs_update = true;
 
                 if (just_connected) {
                     ESP_LOGI("FLOW", "PROTOCOL_CONNECTED → auto-jump to AUTO + start recording");
+                    m5stickc_plus2_buzzer_beep(2500, 60);
                     g_ui_state.current_screen = SCREEN_AUTO;
 
                     /* Treat the moment of connect as "moving" so the stop countdown
@@ -489,6 +498,9 @@ void app_main(void) {
                         ESP_LOGI("FLOW", "auto_on_connect: camera already recording, skipping start");
                         s_is_recording = true;
                     }
+                } else if (just_disconnected) {
+                    ESP_LOGI("FLOW", "PROTOCOL_CONNECTED → cleared (clean disconnect)");
+                    m5stickc_plus2_buzzer_beep(700, 80);
                 }
             }
         }
@@ -499,6 +511,9 @@ void app_main(void) {
          * Reconnection work runs outside BLE callback context to avoid stack stalls. */
         if (connect_logic_consume_unexpected_disconnect()) {
             ESP_LOGW(TAG, "Unexpected disconnect detected - starting immediate background reconnection");
+            /* Distinct double-beep so the user can tell unexpected drop apart
+             * from a clean disconnect (single low beep). */
+            m5stickc_plus2_buzzer_beep_double(700, 60, 80);
             (void)ui_attempt_background_reconnection();
         }
 

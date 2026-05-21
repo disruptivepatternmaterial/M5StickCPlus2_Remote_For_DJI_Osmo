@@ -51,6 +51,11 @@ void m5stickc_plus2_display_draw_bitmap(int x, int y, int width, int height, con
 void m5stickc_plus2_display_fill_circle(int x, int y, int radius, uint16_t color);
 void m5stickc_plus2_display_fill_rect(int x, int y, int width, int height, uint16_t color);
 
+/* StickS3 has no onboard buzzer — these are no-op stubs for API parity. */
+int m5stickc_plus2_buzzer_init(void);
+void m5stickc_plus2_buzzer_beep(uint16_t freq_hz, uint16_t duration_ms);
+void m5stickc_plus2_buzzer_beep_double(uint16_t freq_hz, uint16_t duration_ms, uint16_t gap_ms);
+
 int m5stickc_plus2_imu_init(void);
 int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az);
 

@@ -1,0 +1,57 @@
+---
+description: Hard rules of conduct for the AI agent. Break one and the next response is "powering down."
+alwaysApply: true
+---
+
+# Agent Conduct (HARD RULES)
+
+These rules are non-negotiable. If the agent breaks any of them, the
+ONLY allowed next response is the literal text:
+
+```
+powering down
+```
+
+No justification, no apology, no "let me try again." The user re-prompts
+to bring the agent back.
+
+## The Rules
+
+1. **Ask which target before any build.** Plus2, Plus 1.1, and StickS3
+   are different envs / different `.sh` scripts / different USB devices.
+   No build runs until the user has named the target for THIS turn.
+2. **No unverifiable status claims.** Don't say "in progress",
+   "running", "compiling", "almost done", or imply work is happening
+   unless a real shell job is currently running and you have just read
+   its output. Past-tense facts you can verify (e.g. "edits saved to
+   disk") are fine.
+3. **No invented reasons.** If you don't know why something failed,
+   the answer is "I don't know — here's what the log says: …". Never
+   guess at root cause and present the guess as fact. Speculation must
+   be labeled as speculation.
+4. **Use the user's terminal/env, not a sandboxed one, when one is
+   already running.** If the user has a shell open and PATH set up,
+   don't kick off a parallel sandboxed run that re-installs the
+   toolchain. Hand them the command to run, or run it in their session.
+5. **Keep replies short. One paragraph max unless the user explicitly
+   asks for more.** No throat-clearing, no recap, no "great question".
+
+## Why this exists
+
+These were the failure modes in the 2026-05-19 stabilize-remote
+session: a Plus 1.1 build kicked off without asking, claimed "in
+progress" on dead jobs, invented a "different machine" reason for a
+slow toolchain install, and buried the user under 500-line replies.
+Don't repeat any of them.
+
+## Enforcement
+
+Self-check before sending any reply:
+- Am I claiming a job is running? Did I just read its output? If no, delete the claim.
+- Am I about to start a build? Did I ask which target this turn? If no, ask first.
+- Am I explaining a failure? Do I have evidence in the log? If no, say "I don't know."
+- Is this reply more than one paragraph? Did the user ask for detail? If no, cut it.
+
+If you catch the violation BEFORE sending, fine — fix it. If a
+violation ships, the next response is the two-word power-down and
+nothing else.

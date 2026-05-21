@@ -697,73 +697,78 @@ void m5stickc_plus2_display_clear(uint16_t color) {
     }
 }
 
+/* Stack-buffer-based small filled-rect helper. Sibling implementation of
+ * the one in m5stickc_plus2_hal.c — kept in lockstep across all three
+ * HAL targets. Eliminates the per-pixel SPI transactions that the
+ * previous implementation needed (and that the StickS3 author originally
+ * worked around by introducing the static `s_lcd_one_pixel_dma` storage
+ * — that workaround is no longer needed for text/bitmap paths). */
+static void hal_draw_solid_run(int x, int y, int width, int height, uint16_t color) {
+    if (panel_handle == NULL || width <= 0 || height <= 0) return;
+    if (x >= M5_LCD_H_RES || y >= M5_LCD_V_RES) return;
+    if (x < 0) { width += x; x = 0; }
+    if (y < 0) { height += y; y = 0; }
+    if (x + width  > M5_LCD_H_RES) width  = M5_LCD_H_RES - x;
+    if (y + height > M5_LCD_V_RES) height = M5_LCD_V_RES - y;
+    if (width <= 0 || height <= 0) return;
+
+    uint16_t buf[64];
+    const int max_pixels = (int)(sizeof(buf) / sizeof(buf[0]));
+    int npx = width * height;
+    if (npx > max_pixels) {
+        for (int row = 0; row < height; row++) {
+            hal_draw_solid_run(x, y + row, width, 1, color);
+        }
+        return;
+    }
+    for (int i = 0; i < npx; i++) buf[i] = color;
+    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + width, y + height, buf);
+}
+
 /**
  * @brief Draw single character at normal scale
- * 
- * Convenience wrapper for draw_char_scaled with scale factor of 1.
- * Renders an 8x8 pixel character from the built-in font.
- * 
- * @param x Horizontal position
- * @param y Vertical position
- * @param c Character to draw
- * @param color Foreground color (RGB565)
- * @param bg_color Background color (RGB565, unused for transparency)
  */
 static void draw_char(int x, int y, char c, uint16_t color, uint16_t bg_color) {
     draw_char_scaled(x, y, c, color, bg_color, 1);
 }
 
 /**
- * @brief Draw character with scaling support
- * 
- * Renders a character from the 8x8 font with specified scaling factor.
- * Uses pixel-by-pixel rendering for transparency - only foreground pixels
- * are drawn, allowing background to show through.
- * 
- * @param x Horizontal position
- * @param y Vertical position  
- * @param c Character to draw (ASCII 32-122)
- * @param color Foreground color (RGB565)
- * @param bg_color Background color (unused - transparent rendering)
- * @param scale Scaling factor (1=8x8, 2=16x16, etc.)
+ * @brief Draw character with scaling support — run-batched implementation.
  */
 static void draw_char_scaled(int x, int y, char c, uint16_t color, uint16_t bg_color, int scale) {
+    (void)bg_color;
     if (panel_handle == NULL) return;
-    
-    /* Bounds checking with scaling factor */
-    int scaled_width = 8 * scale;
+    if (scale < 1) scale = 1;
+
+    int scaled_width  = 8 * scale;
     int scaled_height = 8 * scale;
     if (x < 0 || y < 0 || x + scaled_width > M5_LCD_H_RES || y + scaled_height > M5_LCD_V_RES) {
         return;
     }
-    
-    /* Convert ASCII character to font table index */
+
     int idx = 0;
     if (c >= ' ' && c <= 'z') {
         idx = c - ' ';
     }
-    
-    /* Render character pixel-by-pixel with scaling and transparency */
-    const int char_width = 8;
+
+    const int char_width  = 8;
     const int char_height = 8;
-    
+
     for (int row = 0; row < char_height; row++) {
         uint8_t line = font8x8[idx][row];
-        for (int col = 0; col < char_width; col++) {
-            /* Only draw foreground pixels - background remains transparent */
-            if (line & (0x80 >> col)) {
-                /* Draw scaled pixel block (scale x scale pixels) */
-                for (int sy = 0; sy < scale; sy++) {
-                    for (int sx = 0; sx < scale; sx++) {
-                        int px = x + col * scale + sx;
-                        int py = y + row * scale + sy;
-                        if (px < M5_LCD_H_RES && py < M5_LCD_V_RES) {
-                            s_lcd_one_pixel_dma = color;
-                            esp_lcd_panel_draw_bitmap(panel_handle, px, py, px + 1, py + 1,
-                                                      &s_lcd_one_pixel_dma);
-                        }
-                    }
-                }
+        int run_start = -1;
+        for (int col = 0; col <= char_width; col++) {
+            bool bit = (col < char_width) && ((line & (0x80 >> col)) != 0);
+            if (bit && run_start == -1) {
+                run_start = col;
+            } else if (!bit && run_start != -1) {
+                int run_cols = col - run_start;
+                int px = x + run_start * scale;
+                int py = y + row * scale;
+                int rw = run_cols * scale;
+                int rh = scale;
+                hal_draw_solid_run(px, py, rw, rh, color);
+                run_start = -1;
             }
         }
     }
@@ -843,27 +848,31 @@ void m5stickc_plus2_display_print_scaled(int x, int y, const char *text, uint16_
  * @param bg_color Background color (unused - transparent rendering)
  */
 void m5stickc_plus2_display_draw_bitmap(int x, int y, int width, int height, const uint8_t *bitmap, uint16_t color, uint16_t bg_color) {
+    (void)bg_color;
     if (panel_handle == NULL || bitmap == NULL) return;
     if (x >= M5_LCD_H_RES || y >= M5_LCD_V_RES) return;
-    
-    /* Clip bitmap to screen boundaries */
-    int draw_width = (x + width > M5_LCD_H_RES) ? M5_LCD_H_RES - x : width;
+
+    int draw_width  = (x + width  > M5_LCD_H_RES) ? M5_LCD_H_RES - x : width;
     int draw_height = (y + height > M5_LCD_V_RES) ? M5_LCD_V_RES - y : height;
     if (draw_width <= 0 || draw_height <= 0) return;
-    
-    /* Render bitmap pixel-by-pixel for transparency support */
-    int byte_width = (width + 7) / 8;  /* Bytes per row (padded to byte boundary) */
+
+    int byte_width = (width + 7) / 8;
     for (int row = 0; row < draw_height; row++) {
-        for (int col = 0; col < draw_width; col++) {
-            int bitmap_byte_idx = row * byte_width + col / 8;
-            int bit_idx = 7 - (col % 8);  /* MSB first bit ordering */
-            bool pixel_set = (bitmap[bitmap_byte_idx] >> bit_idx) & 1;
-            
-            /* Only draw foreground pixels - background remains transparent */
-            if (pixel_set) {
-                s_lcd_one_pixel_dma = color;
-                esp_lcd_panel_draw_bitmap(panel_handle, x + col, y + row, x + col + 1, y + row + 1,
-                                          &s_lcd_one_pixel_dma);
+        const uint8_t *row_bytes = &bitmap[row * byte_width];
+        int run_start = -1;
+        for (int col = 0; col <= draw_width; col++) {
+            bool pixel_set = false;
+            if (col < draw_width) {
+                int byte_idx = col >> 3;
+                int bit_idx  = 7 - (col & 7);
+                pixel_set = ((row_bytes[byte_idx] >> bit_idx) & 1) != 0;
+            }
+            if (pixel_set && run_start == -1) {
+                run_start = col;
+            } else if (!pixel_set && run_start != -1) {
+                int run_cols = col - run_start;
+                hal_draw_solid_run(x + run_start, y + row, run_cols, 1, color);
+                run_start = -1;
             }
         }
     }
@@ -1080,6 +1089,18 @@ int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az) {
     *ay = (float)ry / BMI270_ACCEL_SCALE;
     *az = (float)rz / BMI270_ACCEL_SCALE;
     return ESP_OK;
+}
+
+/* StickS3 has no onboard piezo buzzer; provide no-op stubs so the shared
+ * call sites in app_main / ui don't need #ifdef guards. */
+int m5stickc_plus2_buzzer_init(void) {
+    return ESP_OK;
+}
+void m5stickc_plus2_buzzer_beep(uint16_t freq_hz, uint16_t duration_ms) {
+    (void)freq_hz; (void)duration_ms;
+}
+void m5stickc_plus2_buzzer_beep_double(uint16_t freq_hz, uint16_t duration_ms, uint16_t gap_ms) {
+    (void)freq_hz; (void)duration_ms; (void)gap_ms;
 }
 
 #endif /* M5STICKS3 */

@@ -62,6 +62,68 @@
 #include "esp_random.h"
 #include "driver/gpio.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
+
+/* ── Non-blocking toast / worker-task plumbing ────────────────────────────────
+ *
+ * Old behavior: ui_show_message() blocked the calling task with a
+ * vTaskDelay() for up to 2 seconds, which on the main task meant 2 s of
+ * dropped button polls per status flash. Multi-second blocking BLE
+ * operations on the same path made the device feel "frozen."
+ *
+ * New behavior:
+ *   - ui_show_message() renders the message and sets a deadline. The main
+ *     loop continues, polling buttons and IMU.
+ *   - ui_update_display() and ui_update_auto_status_line_only() are gated:
+ *     while a toast is active they leave the screen alone; once the toast
+ *     expires the main loop forces a full repaint, which restores the
+ *     normal screen.
+ *   - Button presses (next-screen / execute) cancel any active toast so
+ *     the user always sees an immediate response.
+ *
+ * Long-running BLE operations (manual connect, wake-broadcast, background
+ * reconnect) are dispatched to a single worker task that pulls jobs from
+ * a queue. Each job is allowed to use vTaskDelay()/blocking BLE calls
+ * freely; the main loop is unaffected.
+ *
+ * See SPEC.md "Audible Cues" + "Auto Start/Stop Screen" for the
+ * user-visible behavior this enables.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+static volatile TickType_t s_toast_deadline   = 0;     /* 0 = no toast */
+static volatile bool       s_toast_was_drawn  = false;
+
+typedef enum {
+    UI_WORK_BG_RECONNECT = 0,  /* quiet retry, no toasts */
+    UI_WORK_UI_RECONNECT,      /* manual button — show toasts on each step */
+    UI_WORK_PAIR,              /* fall-back to fresh pairing */
+    UI_WORK_WAKE,              /* wake-broadcast + post-wake reconnect */
+} ui_work_t;
+
+static QueueHandle_t   s_work_queue   = NULL;
+static TaskHandle_t    s_worker_task  = NULL;
+static SemaphoreHandle_t s_disp_mutex = NULL;
+
+static int  ui_perform_complete_reconnection(bool show_messages);
+static void ui_try_manual_pairing(void);
+static void ui_screen_connect_worker(void);
+static void ui_screen_wake_worker(void);
+static void ui_workers_init(void);
+static void ui_dispatch_work(ui_work_t job);
+
+static inline bool ui_toast_active(void) {
+    if (s_toast_deadline == 0) return false;
+    /* Signed-difference idiom handles tick wrap: positive = deadline in future. */
+    return (int32_t)(s_toast_deadline - xTaskGetTickCount()) > 0;
+}
+
+static void ui_cancel_toast(void) {
+    s_toast_deadline = 0;
+    s_toast_was_drawn = false;
+}
+
+/* Forward declarations for partial-update cache invalidation helper. */
+static void ui_auto_status_cache_invalidate(void);
 
 /* Logging tag for ESP_LOG functions */
 #define TAG "UI"
@@ -808,14 +870,83 @@ void ui_auto_connect_on_startup(void) {
     }
 }
 
+/* ── Single shared worker for long-running BLE / protocol operations ──────────
+ *
+ * Why this exists: connect_logic_ble_connect() blocks for up to ~20 s, and
+ * connect_logic_protocol_connect() adds another ~30 s in worst case. Doing
+ * either on the main task froze button input, IMU sampling, GPS push, and
+ * UI redraws for the full duration. The worker drains a small job queue so
+ * those operations always run off-main-task.
+ *
+ * Queue depth 4 + a single worker means duplicate job requests (e.g. the
+ * 15 s background-reconnect timer firing while a worker is already busy)
+ * are allowed to queue but not run in parallel. Per-job handlers re-check
+ * connection state up front, so a queued reconnect that arrives after a
+ * successful connect just bails harmlessly. */
+static void ui_worker_task(void *arg) {
+    (void)arg;
+    ui_work_t job;
+    while (xQueueReceive(s_work_queue, &job, portMAX_DELAY) == pdTRUE) {
+        switch (job) {
+        case UI_WORK_BG_RECONNECT:
+            (void)ui_perform_complete_reconnection(false);
+            break;
+        case UI_WORK_UI_RECONNECT:
+            ui_screen_connect_worker();
+            break;
+        case UI_WORK_PAIR:
+            ui_try_manual_pairing();
+            break;
+        case UI_WORK_WAKE:
+            ui_screen_wake_worker();
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+static void ui_workers_init(void) {
+    if (s_work_queue != NULL) return;
+    s_work_queue = xQueueCreate(4, sizeof(ui_work_t));
+    if (s_work_queue == NULL) {
+        ESP_LOGE(TAG, "ui_workers_init: failed to create work queue");
+        return;
+    }
+    BaseType_t ok = xTaskCreate(ui_worker_task, "ui_worker", UI_AUTO_CONNECT_TASK_STACK,
+                                NULL, 4, &s_worker_task);
+    if (ok != pdPASS) {
+        ESP_LOGE(TAG, "ui_workers_init: failed to create worker task");
+        s_worker_task = NULL;
+    } else {
+        ESP_LOGI(TAG, "UI worker task created (depth 4, prio 4)");
+    }
+}
+
+static void ui_dispatch_work(ui_work_t job) {
+    if (s_work_queue == NULL) {
+        ESP_LOGW(TAG, "ui_dispatch_work: queue not initialized — running inline (will block)");
+        switch (job) {
+        case UI_WORK_BG_RECONNECT:  (void)ui_perform_complete_reconnection(false); break;
+        case UI_WORK_UI_RECONNECT:  ui_screen_connect_worker(); break;
+        case UI_WORK_PAIR:          ui_try_manual_pairing(); break;
+        case UI_WORK_WAKE:          ui_screen_wake_worker(); break;
+        }
+        return;
+    }
+    if (xQueueSend(s_work_queue, &job, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "ui_dispatch_work: queue full, dropping job %d", (int)job);
+    }
+}
+
 /**
  * @brief Attempt background reconnection without UI messages
- * 
- * Public function for background reconnection attempts. This function
- * performs a complete reconnection (BLE + protocol) without showing
- * UI messages, making it suitable for periodic background attempts.
- * 
- * @return int 0 on success, -1 on failure or not needed
+ *
+ * Public function for background reconnection attempts. Dispatches the
+ * actual BLE + protocol work to the UI worker task so the calling task
+ * (typically app_main's main loop) returns immediately.
+ *
+ * @return int 0 on success or queued, -1 if no paired camera / BLE not ready
  */
 int ui_attempt_background_reconnection(void) {
     /* Only attempt reconnection if we're disconnected but initialized */
@@ -824,19 +955,20 @@ int ui_attempt_background_reconnection(void) {
         /* Already connected or connecting */
         return 0;
     }
-    
+
     if (current_state < BLE_INIT_COMPLETE) {
         /* BLE not initialized, cannot reconnect */
         return -1;
     }
-    
+
     if (!g_stored_camera.is_paired) {
         /* No paired camera to reconnect to */
         return -1;
     }
-    
-    ESP_LOGI(TAG, "Background reconnection attempt");
-    return ui_perform_complete_reconnection(false);  /* No UI messages */
+
+    ESP_LOGI(TAG, "Background reconnection dispatched to worker");
+    ui_dispatch_work(UI_WORK_BG_RECONNECT);
+    return 0;
 }
 
 /**
@@ -853,6 +985,7 @@ int ui_attempt_background_reconnection(void) {
  */
 void ui_init(void) {
     ESP_LOGI(TAG, "Initializing UI system");
+    s_disp_mutex = xSemaphoreCreateMutex();
     
     /* Initialize NVS flash storage for persistent data */
     esp_err_t err = nvs_flash_init();
@@ -903,7 +1036,12 @@ void ui_init(void) {
     ui_detect_device_and_set_scale();
     g_ui_state.current_screen = SCREEN_CONNECT;
     g_ui_state.display_needs_update = true;
-    
+
+    /* Bring up the worker task BEFORE auto-connect so any deferred work
+     * dispatched from button presses during the auto-connect window has
+     * a worker to run on. */
+    ui_workers_init();
+
     /* Attempt automatic connection to previously paired camera */
     ui_auto_connect_on_startup();
     
@@ -1154,57 +1292,76 @@ static void auto_draw_gps_line(void) {
  * Caller is welcome to invoke this at any cadence; it will cheaply early-out
  * to an `if` per region when nothing to do.
  */
+/* Module-scope cache for the AUTO partial-update path so a separate
+ * helper can invalidate it when a toast is dismissed or a full repaint
+ * fires. Previously this was a function-local `static` block, which
+ * meant a full repaint elsewhere couldn't tell the partial-update path
+ * "your cache is stale; redraw everything next time."
+ */
+static bool        s_auto_init           = false;
+static uint16_t    s_auto_last_icon_color = 0;
+static uint16_t    s_auto_last_pill_bg    = 0;
+static uint16_t    s_auto_last_pill_fg    = 0;
+static char        s_auto_last_pill_text[24] = {0};
+static bool        s_auto_last_gps_fix    = false;
+static float       s_auto_last_lat        = 0.0f;
+static float       s_auto_last_lon        = 0.0f;
+static uint32_t    s_auto_last_sats       = 0xFFFFFFFFu;
+
+static void ui_auto_status_cache_invalidate(void) {
+    s_auto_init = false;
+    s_auto_last_pill_text[0] = '\0';
+}
+
 void ui_update_auto_status_line_only(void) {
-    /* Cached previous values so we can skip identical repaints. */
-    static bool        s_init = false;
-    static uint16_t    s_last_icon_color = 0;
-    static uint16_t    s_last_pill_bg = 0;
-    static uint16_t    s_last_pill_fg = 0;
-    static char        s_last_pill_text[24] = {0};
-    static bool        s_last_gps_fix = false;
-    static float       s_last_lat = 0.0f;
-    static float       s_last_lon = 0.0f;
-    static uint8_t     s_last_sats = 0xFFu;
+    /* While a toast is on screen, leave it alone — the user is still
+     * reading it, and overpainting a status line would be racey with
+     * the toast's clear+text. The next full ui_update_display() after
+     * toast expiry will repaint the whole AUTO screen via the cache
+     * invalidation set in ui_show_message(). */
+    if (ui_toast_active()) return;
 
     char scratch[24];
     auto_pill_info_t info;
     auto_compute_pill(&info, scratch, sizeof(scratch));
 
+    if (s_disp_mutex && xSemaphoreTake(s_disp_mutex, pdMS_TO_TICKS(150)) != pdTRUE) return;
+
     /* Icon: erase + redraw only when color actually changed, or first-time call. */
-    if (!s_init || info.icon_color != s_last_icon_color) {
+    if (!s_auto_init || info.icon_color != s_auto_last_icon_color) {
         m5stickc_plus2_display_fill_rect(g_layout.icon_x, g_layout.icon_y,
                                          32, 32, M5_COLOR_BLACK);
         ui_draw_bitmap(g_layout.icon_x, g_layout.icon_y,
                        screen_info[SCREEN_AUTO].icon, 32, 32, info.icon_color);
-        s_last_icon_color = info.icon_color;
+        s_auto_last_icon_color = info.icon_color;
     }
 
     /* Pill: redraw when label, bg, or fg color changed. */
-    if (!s_init
-            || info.pill_bg != s_last_pill_bg
-            || info.pill_fg != s_last_pill_fg
-            || strncmp(info.text, s_last_pill_text, sizeof(s_last_pill_text)) != 0) {
+    if (!s_auto_init
+            || info.pill_bg != s_auto_last_pill_bg
+            || info.pill_fg != s_auto_last_pill_fg
+            || strncmp(info.text, s_auto_last_pill_text, sizeof(s_auto_last_pill_text)) != 0) {
         auto_draw_pill(&info);
-        s_last_pill_bg = info.pill_bg;
-        s_last_pill_fg = info.pill_fg;
-        strncpy(s_last_pill_text, info.text, sizeof(s_last_pill_text) - 1);
-        s_last_pill_text[sizeof(s_last_pill_text) - 1] = '\0';
+        s_auto_last_pill_bg = info.pill_bg;
+        s_auto_last_pill_fg = info.pill_fg;
+        strncpy(s_auto_last_pill_text, info.text, sizeof(s_auto_last_pill_text) - 1);
+        s_auto_last_pill_text[sizeof(s_auto_last_pill_text) - 1] = '\0';
     }
 
     /* GPS: redraw when fix transitions, coords change ≥0.0001°, or sat count changes. */
     gps_data_t gps;
     gps_get_data(&gps);
-    bool gps_changed = !s_init
-        || gps.has_fix != s_last_gps_fix
-        || gps.satellite_count != s_last_sats
-        || fabsf(gps.latitude  - s_last_lat) > 0.0001f
-        || fabsf(gps.longitude - s_last_lon) > 0.0001f;
+    bool gps_changed = !s_auto_init
+        || gps.has_fix != s_auto_last_gps_fix
+        || gps.satellite_count != s_auto_last_sats
+        || fabsf(gps.latitude  - s_auto_last_lat) > 0.0001f
+        || fabsf(gps.longitude - s_auto_last_lon) > 0.0001f;
     if (gps_changed) {
         auto_draw_gps_line();
-        s_last_gps_fix = gps.has_fix;
-        s_last_lat     = gps.latitude;
-        s_last_lon     = gps.longitude;
-        s_last_sats    = gps.satellite_count;
+        s_auto_last_gps_fix = gps.has_fix;
+        s_auto_last_lat     = gps.latitude;
+        s_auto_last_lon     = gps.longitude;
+        s_auto_last_sats    = gps.satellite_count;
     }
 
     /* Belt-and-braces: keep the bottom-of-screen edge clean even on partial paths.
@@ -1212,7 +1369,8 @@ void ui_update_auto_status_line_only(void) {
     m5stickc_plus2_display_fill_rect(0, M5_LCD_V_RES - 4,
                                      M5_LCD_H_RES, 4, M5_COLOR_BLACK);
 
-    s_init = true;
+    if (s_disp_mutex) xSemaphoreGive(s_disp_mutex);
+    s_auto_init = true;
 }
 
 /**
@@ -1227,10 +1385,31 @@ void ui_update_auto_status_line_only(void) {
  * Only updates when display_needs_update flag is set for efficiency.
  */
 void ui_update_display(void) {
+    /* While a toast is on screen, leave it alone. */
+    if (ui_toast_active()) {
+        return;
+    }
+
+    /* Toast just expired (was drawn, deadline passed) — force a fresh
+     * full repaint of the underlying screen so the user transitions
+     * smoothly back from the message. */
+    if (s_toast_was_drawn) {
+        s_toast_was_drawn = false;
+        s_toast_deadline  = 0;
+        ui_auto_status_cache_invalidate();
+        g_ui_state.display_needs_update = true;
+    }
+
     if (!g_ui_state.display_needs_update) {
         return;
     }
-    
+
+    /* Serialize all SPI display writes — worker task and main loop both call
+     * this path; concurrent access to esp_lcd_panel_draw_bitmap asserts. */
+    if (s_disp_mutex && xSemaphoreTake(s_disp_mutex, pdMS_TO_TICKS(150)) != pdTRUE) {
+        return;
+    }
+
     /* Clear entire display to prevent visual artifacts */
     m5stickc_plus2_display_fill_rect(0, 0, 240, 135, M5_COLOR_BLACK);
     
@@ -1298,6 +1477,7 @@ void ui_update_display(void) {
     m5stickc_plus2_display_fill_rect(0, M5_LCD_V_RES - 4, M5_LCD_H_RES, 4, M5_COLOR_BLACK);
 
     g_ui_state.display_needs_update = false;
+    if (s_disp_mutex) xSemaphoreGive(s_disp_mutex);
     ESP_LOGI(TAG, "Display updated - Screen: %s", screen->name);
 }
 
@@ -1308,9 +1488,15 @@ void ui_update_display(void) {
  * Called when Button B is pressed.
  */
 void ui_next_screen(void) {
+    /* User pressed Button B — make the response immediate by cancelling
+     * any in-flight toast so ui_update_display() repaints the new screen
+     * on the very next iteration. */
+    ui_cancel_toast();
+    ui_auto_status_cache_invalidate();
+
     g_ui_state.current_screen = (g_ui_state.current_screen + 1) % SCREEN_COUNT;
     g_ui_state.display_needs_update = true;
-    ESP_LOGI(TAG, "Switched to screen: %d (%s)", 
+    ESP_LOGI(TAG, "Switched to screen: %d (%s)",
              g_ui_state.current_screen, screen_info[g_ui_state.current_screen].name);
 }
 
@@ -1323,39 +1509,57 @@ void ui_next_screen(void) {
 void ui_execute_current_screen(void) {
     const screen_info_t* screen = &screen_info[g_ui_state.current_screen];
     ESP_LOGI(TAG, "Executing function for screen: %s", screen->name);
-    
+
+    /* Button A: cancel any in-flight toast so the user sees the result
+     * of THIS press, not a stale message from the previous one. The
+     * screen handler may immediately call ui_show_message() again to
+     * replace it with new feedback. */
+    ui_cancel_toast();
+    ui_auto_status_cache_invalidate();
+
     if (screen->execute_func) {
         screen->execute_func();
     }
-    
+
     /* Schedule display update to reflect any changes */
     g_ui_state.display_needs_update = true;
 }
 
 /**
- * @brief Display temporary message with automatic timeout
- * 
- * Shows a status or feedback message for a specified duration, then
- * returns to normal UI display. Used for operation feedback.
- * 
- * @param message Text to display
- * @param color Text color (RGB565 format)
- * @param duration_ms Display duration in milliseconds
+ * @brief Display a temporary on-screen message (non-blocking).
+ *
+ * Renders @p message immediately, sets an expiry deadline, and returns
+ * without delay. The main loop's ui_update_display() leaves the toast on
+ * screen until the deadline elapses, then forces a full redraw so the
+ * underlying screen comes back automatically.
+ *
+ * Calling this from a worker task that already does sequential
+ * vTaskDelay() between steps still works as expected — each call resets
+ * the deadline. Calling from the main task no longer steals 0.5–2 s of
+ * button-poll time, which is the whole point of this refactor.
+ *
+ * @param message Text to display.
+ * @param color Text color (RGB565 format).
+ * @param duration_ms How long to keep the message on screen (≥ 1 ms).
  */
 void ui_show_message(const char* message, uint16_t color, int duration_ms) {
+    if (message == NULL) return;
+    if (duration_ms < 1) duration_ms = 1;
+
+    if (s_disp_mutex) xSemaphoreTake(s_disp_mutex, pdMS_TO_TICKS(300));
     m5stickc_plus2_display_clear(M5_COLOR_BLACK);
-    
-    /* Calculate message position based on device type */
+
     int msg_x = g_ui_state.is_plus2_device ? 40 : 30;
     int msg_y = g_ui_state.is_plus2_device ? 60 : 40;
-    
     m5stickc_plus2_display_print(msg_x, msg_y, message, color);
-    
-    /* Block for specified duration (simple implementation) */
-    vTaskDelay(pdMS_TO_TICKS(duration_ms));
-    
-    /* Schedule normal UI restore */
-    g_ui_state.display_needs_update = true;
+    if (s_disp_mutex) xSemaphoreGive(s_disp_mutex);
+
+    s_toast_deadline  = xTaskGetTickCount() + pdMS_TO_TICKS((uint32_t)duration_ms);
+    s_toast_was_drawn = true;
+    /* Partial-update cache must be invalidated so the post-toast full
+     * repaint of the AUTO screen never skips a region whose value
+     * happened to match the (stale) cached value at toast time. */
+    ui_auto_status_cache_invalidate();
 }
 
 /**
@@ -1419,18 +1623,37 @@ static void ui_try_manual_pairing(void) {
 }
 
 /**
- * @brief Handle camera connection screen activation
- * 
- * Manages camera pairing and reconnection logic:
- * - If camera already paired: attempts reconnection
- * - If no paired camera: initiates pairing process
- * - Handles fallback to manual pairing if auto-reconnect fails
+ * @brief Handle camera connection screen activation (button A on CONNECT).
+ *
+ * Now a thin dispatcher: the long-running BLE / protocol work is queued
+ * onto the UI worker task so the main loop keeps polling buttons. The
+ * user gets immediate visual feedback via the toast we set here.
  */
 void ui_screen_connect(void) {
-    ESP_LOGI(TAG, "Executing connect screen");
-    
+    ESP_LOGI(TAG, "Executing connect screen — dispatching to worker");
+
     connect_state_t state = connect_logic_get_state();
-    
+    if (state == PROTOCOL_CONNECTED) {
+        ui_show_message("Already Connected!", M5_COLOR_GREEN, 1000);
+        return;
+    }
+    if (state == BLE_NOT_INIT) {
+        ui_show_message("BLE not ready", M5_COLOR_RED, 2000);
+        return;
+    }
+
+    /* Show the user that we heard the press. The worker will flash its
+     * own progressive messages ("BLE Connected...", "Reconnected!", etc.)
+     * as it runs. */
+    ui_show_message("Connecting...", M5_COLOR_CYAN, 1000);
+    ui_dispatch_work(UI_WORK_UI_RECONNECT);
+}
+
+/* Original blocking body — now runs only on the worker task. */
+static void ui_screen_connect_worker(void) {
+    ESP_LOGI(TAG, "ui_screen_connect_worker: starting");
+
+    connect_state_t state = connect_logic_get_state();
     if (state == PROTOCOL_CONNECTED) {
         ui_show_message("Already Connected!", M5_COLOR_GREEN, 1000);
         return;
@@ -1702,6 +1925,10 @@ void ui_screen_auto(void) {
 
     if (is_camera_recording()) {
         ESP_LOGI(TAG, "Auto: manual stop → DISARM");
+        /* Audible cue first so the user can hear the press registered even
+         * before the BLE round-trip to the camera completes. See SPEC.md
+         * "Audible Cues" — pause = single low beep (700 Hz / 50 ms). */
+        m5stickc_plus2_buzzer_beep(700, 50);
         (void)command_logic_stop_record();
         motion_logic_force_idle();
         /* Disarm so motion can't immediately re-trigger start_record while the
@@ -1710,6 +1937,9 @@ void ui_screen_auto(void) {
         motion_logic_set_armed(false);
     } else {
         ESP_LOGI(TAG, "Auto: manual start → ARM");
+        /* Unpause = single high beep (2500 Hz / 50 ms) — matches connect cue
+         * pitch but shorter so the two events stay audibly distinct. */
+        m5stickc_plus2_buzzer_beep(2500, 50);
         (void)command_logic_switch_camera_mode(CAMERA_MODE_NORMAL);
         vTaskDelay(pdMS_TO_TICKS(200));
         (void)command_logic_start_record();
@@ -1724,40 +1954,51 @@ void ui_screen_auto(void) {
 }
 
 /**
- * @brief Handle camera wake screen activation
+ * @brief Handle camera wake screen activation (button A on WAKE).
  *
- * Sends BLE advertising broadcast with wake-up pattern to rouse the camera
- * from sleep mode. Uses the MAC address of the paired camera to ensure
- * targeted wake-up.
- *
- * Format: [10, 0xff, 'W','K','P', MAC[5-0] reversed]
- * Duration: 2 seconds of broadcasting
+ * Dispatches the BLE wake-broadcast + post-wake reconnect to the worker
+ * task so the main loop's button polling stays responsive throughout the
+ * 2 s broadcast and the 3 s post-wake settle period.
  */
 void ui_screen_wake(void) {
-    ESP_LOGI(TAG, "Executing wake screen");
-    
-    /* Verify we have a paired camera with known MAC address */
+    ESP_LOGI(TAG, "Executing wake screen — dispatching to worker");
+
     if (!g_stored_camera.is_paired) {
         ui_show_message("No Paired Camera", M5_COLOR_RED, 1500);
         ESP_LOGW(TAG, "No paired camera found for wake broadcast");
         return;
     }
-    
-    /* Check if we're currently disconnected */
+
+    /* Immediate user feedback so the press registers; the worker will
+     * overwrite this toast with progress messages as it runs. */
+    ui_show_message("Wake Broadcasting...", M5_COLOR_YELLOW, 1000);
+    ui_dispatch_work(UI_WORK_WAKE);
+}
+
+/* Original blocking body — runs only on the worker task. */
+static void ui_screen_wake_worker(void) {
+    ESP_LOGI(TAG, "ui_screen_wake_worker: starting");
+
+    if (!g_stored_camera.is_paired) {
+        ui_show_message("No Paired Camera", M5_COLOR_RED, 1500);
+        ESP_LOGW(TAG, "No paired camera found for wake broadcast");
+        return;
+    }
+
     bool was_disconnected = (connect_logic_get_state() <= BLE_INIT_COMPLETE);
-    
+
     ESP_LOGI(TAG, "Starting wake broadcast for paired camera");
     esp_err_t ret = ble_wake_camera(g_stored_camera.camera_mac);
-    
+
     if (ret == ESP_OK) {
         ui_show_message("Wake Broadcast\nSent (2s)", M5_COLOR_YELLOW, 2000);
         ESP_LOGI(TAG, "Wake broadcast started successfully");
-        
+
         /* If we were disconnected when sending wake, attempt reconnection after delay */
         if (was_disconnected) {
             ESP_LOGI(TAG, "Wake sent while disconnected, will attempt reconnection in 3 seconds");
             vTaskDelay(pdMS_TO_TICKS(3000));  /* Wait for camera to wake up */
-            
+
             int reconnect_result = ui_perform_complete_reconnection(true);
             if (reconnect_result == 0) {
                 ESP_LOGI(TAG, "Reconnection successful after wake broadcast");

@@ -156,9 +156,9 @@ static void gps_apply_gga(const char *line) {
     if (nmea_field_copy(line, 9, buf, sizeof(buf)) > 0 && buf[0] != '\0') {
         alt = strtof(buf, NULL);
     }
-    uint8_t nsat = 0;
+    uint32_t nsat = 0;
     if (nmea_field_copy(line, 7, buf, sizeof(buf)) > 0 && buf[0] != '\0') {
-        nsat = (uint8_t)strtoul(buf, NULL, 10);
+        nsat = (uint32_t)strtoul(buf, NULL, 10);
     }
     if (xSemaphoreTake(s_gps_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         s_data.latitude = lat;
@@ -208,6 +208,38 @@ static void gps_apply_rmc(const char *line) {
     }
 }
 
+/* $GxZDA,hhmmss.ss,dd,mm,yyyy,ltzh,ltzm — date/time without depending on RMC field 9 */
+static void gps_apply_zda(const char *line) {
+    char buf[16];
+    int32_t hms_utc = 0;
+    if (nmea_field_copy(line, 1, buf, sizeof(buf)) > 0) {
+        (void)nmea_parse_hms_utc(buf, &hms_utc);
+    }
+    if (nmea_field_copy(line, 2, buf, sizeof(buf)) <= 0 || buf[0] == '\0') {
+        return;
+    }
+    long dd = strtol(buf, NULL, 10);
+    if (nmea_field_copy(line, 3, buf, sizeof(buf)) <= 0 || buf[0] == '\0') {
+        return;
+    }
+    long mo = strtol(buf, NULL, 10);
+    if (nmea_field_copy(line, 4, buf, sizeof(buf)) <= 0 || buf[0] == '\0') {
+        return;
+    }
+    long year = strtol(buf, NULL, 10);
+    if (dd < 1L || dd > 31L || mo < 1L || mo > 12L || year < 2000L || year > 2099L) {
+        return;
+    }
+    int32_t ymd = (int32_t)(year * 10000L + mo * 100L + dd);
+    if (xSemaphoreTake(s_gps_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        s_data.year_month_day = ymd;
+        if (hms_utc > 0) {
+            s_data.hour_minute_second = hms_utc;
+        }
+        xSemaphoreGive(s_gps_mutex);
+    }
+}
+
 static void gps_parse_line(const char *line) {
     if (line == NULL || line[0] != '$') {
         return;
@@ -216,6 +248,8 @@ static void gps_parse_line(const char *line) {
         gps_apply_gga(line);
     } else if (strstr(line, "RMC") != NULL) {
         gps_apply_rmc(line);
+    } else if (strstr(line, "ZDA") != NULL) {
+        gps_apply_zda(line);
     }
 }
 
@@ -288,7 +322,7 @@ static void gps_uart_task(void *arg) {
                     if (lines_since_log >= 50U) {
                         lines_since_log = 0U;
                         bool has_fix_now = false;
-                        uint8_t sats = 0;
+                        uint32_t sats = 0;
                         if (s_gps_mutex && xSemaphoreTake(s_gps_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
                             has_fix_now = s_data.has_fix;
                             sats = s_data.satellite_count;
@@ -300,7 +334,7 @@ static void gps_uart_task(void *arg) {
                     }
                     /* Log fix transitions once each direction. */
                     bool has_fix_now = false;
-                    uint8_t sats = 0;
+                    uint32_t sats = 0;
                     if (s_gps_mutex && xSemaphoreTake(s_gps_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
                         has_fix_now = s_data.has_fix;
                         sats = s_data.satellite_count;

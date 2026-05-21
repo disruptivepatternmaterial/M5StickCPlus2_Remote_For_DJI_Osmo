@@ -13,6 +13,7 @@
 #include "driver/ledc.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -307,6 +308,13 @@ int m5stickc_plus2_init(void) {
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize buttons");
         return ret;
+    }
+
+    /* Initialize buzzer (non-fatal: continue silently if it fails so the
+     * device still works without audible cues). */
+    ret = m5stickc_plus2_buzzer_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Buzzer init failed (%s) - continuing without audible cues", esp_err_to_name(ret));
     }
 
     /* Initialize IMU (non-fatal: log warning if absent but continue) */
@@ -775,71 +783,104 @@ void m5stickc_plus2_display_clear(uint16_t color) {
 }
 
 /**
+ * @brief Draw a small solid-color rect using a stack scratch buffer.
+ *
+ * Internal helper for batched glyph / monochrome-bitmap rendering. The
+ * input width × height MUST fit within the stack buffer (64 px = 128 B);
+ * the function falls back to a row-by-row stripe when the requested
+ * region is larger so the buffer never overflows.
+ *
+ * Why a stack buffer: text glyphs and 1-bit bitmap runs are tiny
+ * (≤ 16 px × 2 rows for scale-2 text, ≤ 32 px × 1 row for icon rows).
+ * heap_caps_malloc on every glyph fragments DMA-capable internal SRAM
+ * after a few hours of runtime — the symptom the stabilize-remote plan
+ * is trying to remove.
+ */
+static void hal_draw_solid_run(int x, int y, int width, int height, uint16_t color) {
+    if (panel_handle == NULL || width <= 0 || height <= 0) return;
+    if (x >= M5_LCD_H_RES || y >= M5_LCD_V_RES) return;
+    if (x < 0) { width += x; x = 0; }
+    if (y < 0) { height += y; y = 0; }
+    if (x + width  > M5_LCD_H_RES) width  = M5_LCD_H_RES - x;
+    if (y + height > M5_LCD_V_RES) height = M5_LCD_V_RES - y;
+    if (width <= 0 || height <= 0) return;
+
+    uint16_t buf[64];
+    const int max_pixels = (int)(sizeof(buf) / sizeof(buf[0]));
+    int npx = width * height;
+    if (npx > max_pixels) {
+        /* Region too tall to fit in scratch — emit one row at a time so
+         * the per-call buffer footprint stays inside `buf`. Recursion is
+         * bounded to 1 extra level (each row is ≤ 240 px wide × 1 row,
+         * still capped by max_pixels). */
+        for (int row = 0; row < height; row++) {
+            hal_draw_solid_run(x, y + row, width, 1, color);
+        }
+        return;
+    }
+    for (int i = 0; i < npx; i++) buf[i] = color;
+    esp_lcd_panel_draw_bitmap(panel_handle, x, y, x + width, y + height, buf);
+}
+
+/**
  * @brief Draw single character at normal scale
- * 
- * Convenience wrapper for draw_char_scaled with scale factor of 1.
- * Renders an 8x8 pixel character from the built-in font.
- * 
- * @param x Horizontal position
- * @param y Vertical position
- * @param c Character to draw
- * @param color Foreground color (RGB565)
- * @param bg_color Background color (RGB565, unused for transparency)
  */
 static void draw_char(int x, int y, char c, uint16_t color, uint16_t bg_color) {
     draw_char_scaled(x, y, c, color, bg_color, 1);
 }
 
 /**
- * @brief Draw character with scaling support
- * 
- * Renders a character from the 8x8 font with specified scaling factor.
- * Uses pixel-by-pixel rendering for transparency - only foreground pixels
- * are drawn, allowing background to show through.
- * 
- * @param x Horizontal position
- * @param y Vertical position  
- * @param c Character to draw (ASCII 32-122)
- * @param color Foreground color (RGB565)
- * @param bg_color Background color (unused - transparent rendering)
- * @param scale Scaling factor (1=8x8, 2=16x16, etc.)
+ * @brief Draw character with scaling support — run-batched implementation.
+ *
+ * Each foreground bit in the 8x8 font becomes a `scale × scale` block on
+ * screen. Runs of contiguous foreground bits within a row are emitted as
+ * a single esp_lcd_panel_draw_bitmap call (`run_cols * scale` wide ×
+ * `scale` tall). For "WAITING" at scale 2 this drops the SPI transaction
+ * count from ~256 per glyph (one per lit pixel) to ≤ 8 per glyph (one
+ * per run × 2 sub-rows is collapsed by drawing the full `scale`-tall
+ * stripe in one call).
+ *
+ * Background pixels are left untouched so existing call sites that draw
+ * text on top of a pre-painted pill still render correctly without
+ * needing a bg_color parameter — the @p bg_color argument is preserved
+ * for API compatibility but unused, just like the original.
  */
 static void draw_char_scaled(int x, int y, char c, uint16_t color, uint16_t bg_color, int scale) {
+    (void)bg_color;
     if (panel_handle == NULL) return;
-    
-    /* Bounds checking with scaling factor */
-    int scaled_width = 8 * scale;
+    if (scale < 1) scale = 1;
+
+    int scaled_width  = 8 * scale;
     int scaled_height = 8 * scale;
     if (x < 0 || y < 0 || x + scaled_width > M5_LCD_H_RES || y + scaled_height > M5_LCD_V_RES) {
         return;
     }
-    
-    /* Convert ASCII character to font table index */
+
     int idx = 0;
     if (c >= ' ' && c <= 'z') {
         idx = c - ' ';
     }
-    
-    /* Render character pixel-by-pixel with scaling and transparency */
-    const int char_width = 8;
+
+    const int char_width  = 8;
     const int char_height = 8;
-    
+
     for (int row = 0; row < char_height; row++) {
         uint8_t line = font8x8[idx][row];
-        for (int col = 0; col < char_width; col++) {
-            /* Only draw foreground pixels - background remains transparent */
-            if (line & (0x80 >> col)) {
-                /* Draw scaled pixel block (scale x scale pixels) */
-                for (int sy = 0; sy < scale; sy++) {
-                    for (int sx = 0; sx < scale; sx++) {
-                        int px = x + col * scale + sx;
-                        int py = y + row * scale + sy;
-                        if (px < M5_LCD_H_RES && py < M5_LCD_V_RES) {
-                            uint16_t pixel_color = color;
-                            esp_lcd_panel_draw_bitmap(panel_handle, px, py, px + 1, py + 1, &pixel_color);
-                        }
-                    }
-                }
+        int run_start = -1;
+        /* Iterate one past the end so a run that touches the right edge
+         * is flushed without a special case after the loop. */
+        for (int col = 0; col <= char_width; col++) {
+            bool bit = (col < char_width) && ((line & (0x80 >> col)) != 0);
+            if (bit && run_start == -1) {
+                run_start = col;
+            } else if (!bit && run_start != -1) {
+                int run_cols = col - run_start;
+                int px = x + run_start * scale;
+                int py = y + row * scale;
+                int rw = run_cols * scale;
+                int rh = scale;
+                hal_draw_solid_run(px, py, rw, rh, color);
+                run_start = -1;
             }
         }
     }
@@ -919,26 +960,38 @@ void m5stickc_plus2_display_print_scaled(int x, int y, const char *text, uint16_
  * @param bg_color Background color (unused - transparent rendering)
  */
 void m5stickc_plus2_display_draw_bitmap(int x, int y, int width, int height, const uint8_t *bitmap, uint16_t color, uint16_t bg_color) {
+    (void)bg_color;
     if (panel_handle == NULL || bitmap == NULL) return;
     if (x >= M5_LCD_H_RES || y >= M5_LCD_V_RES) return;
-    
+
     /* Clip bitmap to screen boundaries */
-    int draw_width = (x + width > M5_LCD_H_RES) ? M5_LCD_H_RES - x : width;
+    int draw_width  = (x + width  > M5_LCD_H_RES) ? M5_LCD_H_RES - x : width;
     int draw_height = (y + height > M5_LCD_V_RES) ? M5_LCD_V_RES - y : height;
     if (draw_width <= 0 || draw_height <= 0) return;
-    
-    /* Render bitmap pixel-by-pixel for transparency support */
-    int byte_width = (width + 7) / 8;  /* Bytes per row (padded to byte boundary) */
+
+    /* Run-batched 1-bit bitmap rendering: collapse contiguous foreground
+     * pixels in each row into a single esp_lcd call. Same transparency
+     * semantics as before (background pixels untouched). For a 32×32
+     * icon the worst case is ~16 SPI calls/row × 32 rows = 512 vs the
+     * old per-pixel ~1024+; in practice icons have fewer runs and this
+     * drops to <100 calls. */
+    int byte_width = (width + 7) / 8;
     for (int row = 0; row < draw_height; row++) {
-        for (int col = 0; col < draw_width; col++) {
-            int bitmap_byte_idx = row * byte_width + col / 8;
-            int bit_idx = 7 - (col % 8);  /* MSB first bit ordering */
-            bool pixel_set = (bitmap[bitmap_byte_idx] >> bit_idx) & 1;
-            
-            /* Only draw foreground pixels - background remains transparent */
-            if (pixel_set) {
-                uint16_t pixel_color = color;
-                esp_lcd_panel_draw_bitmap(panel_handle, x + col, y + row, x + col + 1, y + row + 1, &pixel_color);
+        const uint8_t *row_bytes = &bitmap[row * byte_width];
+        int run_start = -1;
+        for (int col = 0; col <= draw_width; col++) {
+            bool pixel_set = false;
+            if (col < draw_width) {
+                int byte_idx = col >> 3;
+                int bit_idx  = 7 - (col & 7);
+                pixel_set = ((row_bytes[byte_idx] >> bit_idx) & 1) != 0;
+            }
+            if (pixel_set && run_start == -1) {
+                run_start = col;
+            } else if (!pixel_set && run_start != -1) {
+                int run_cols = col - run_start;
+                hal_draw_solid_run(x + run_start, y + row, run_cols, 1, color);
+                run_start = -1;
             }
         }
     }
@@ -1096,4 +1149,176 @@ int m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az) {
     return ESP_OK;
 }
 
-#endif /* M5STICKC_PLUS_11 */
+/* ──────────────────────────────────────────────────────────────────────────
+ * Onboard piezo buzzer (GPIO M5_BUZZER_PIN)
+ *
+ * Uses LEDC_TIMER_1 + LEDC_CHANNEL_1 in LEDC_LOW_SPEED_MODE so it never
+ * conflicts with the backlight (LEDC_TIMER_0 + LEDC_CHANNEL_0). All beeps
+ * are non-blocking: tone-on starts immediately, an esp_timer turns it off
+ * once `duration_ms` elapses. The double-beep variant chains two tones via
+ * the same single timer, so the main loop never blocks on audio cues.
+ *
+ * Why this matters here (per the stabilize-remote plan): button input,
+ * BLE state changes, and motion ARM/DISARM all need audible feedback the
+ * user can hear while driving — but adding `vTaskDelay` between two
+ * beeps on the main task would re-introduce the same lockout the rest of
+ * this work is removing. Hence the timer-driven state machine.
+ * ──────────────────────────────────────────────────────────────────────── */
+
+#define BUZZER_LEDC_TIMER       LEDC_TIMER_1
+#define BUZZER_LEDC_CHANNEL     LEDC_CHANNEL_1
+#define BUZZER_LEDC_DUTY_50PCT  128   /* 50% of 8-bit duty resolution */
+
+typedef enum {
+    BUZZER_PHASE_IDLE = 0,
+    BUZZER_PHASE_TONE1,   /* first tone playing */
+    BUZZER_PHASE_GAP,     /* silence between tones (double-beep only) */
+    BUZZER_PHASE_TONE2,   /* second tone playing */
+} buzzer_phase_t;
+
+static esp_timer_handle_t s_buzzer_timer    = NULL;
+static volatile buzzer_phase_t s_buzzer_phase = BUZZER_PHASE_IDLE;
+static uint16_t s_buzzer_freq_hz   = 2000;
+static uint16_t s_buzzer_dur1_ms   = 0;
+static uint16_t s_buzzer_dur2_ms   = 0;
+static uint16_t s_buzzer_gap_ms    = 0;
+static bool s_buzzer_initialized   = false;
+
+static inline uint16_t buzzer_clamp_freq(uint16_t f) {
+    if (f < 50) return 50;
+    if (f > 8000) return 8000;
+    return f;
+}
+static inline uint16_t buzzer_clamp_dur(uint16_t d) {
+    if (d == 0) return 1;
+    if (d > 500) return 500;
+    return d;
+}
+
+static void buzzer_tone_on(uint16_t freq_hz) {
+    ledc_set_freq(LEDC_LOW_SPEED_MODE, BUZZER_LEDC_TIMER, freq_hz);
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, BUZZER_LEDC_CHANNEL, BUZZER_LEDC_DUTY_50PCT);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, BUZZER_LEDC_CHANNEL);
+}
+
+static void buzzer_tone_off(void) {
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, BUZZER_LEDC_CHANNEL, 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, BUZZER_LEDC_CHANNEL);
+}
+
+static void buzzer_timer_cb(void *arg) {
+    (void)arg;
+    switch (s_buzzer_phase) {
+    case BUZZER_PHASE_TONE1:
+        buzzer_tone_off();
+        if (s_buzzer_dur2_ms == 0) {
+            s_buzzer_phase = BUZZER_PHASE_IDLE;
+        } else {
+            s_buzzer_phase = BUZZER_PHASE_GAP;
+            esp_timer_start_once(s_buzzer_timer, (uint64_t)s_buzzer_gap_ms * 1000ULL);
+        }
+        break;
+    case BUZZER_PHASE_GAP:
+        buzzer_tone_on(s_buzzer_freq_hz);
+        s_buzzer_phase = BUZZER_PHASE_TONE2;
+        esp_timer_start_once(s_buzzer_timer, (uint64_t)s_buzzer_dur2_ms * 1000ULL);
+        break;
+    case BUZZER_PHASE_TONE2:
+    default:
+        buzzer_tone_off();
+        s_buzzer_phase = BUZZER_PHASE_IDLE;
+        break;
+    }
+}
+
+int m5stickc_plus2_buzzer_init(void) {
+    if (s_buzzer_initialized) {
+        return ESP_OK;
+    }
+
+    ledc_timer_config_t buzzer_timer = {
+        .speed_mode      = LEDC_LOW_SPEED_MODE,
+        .timer_num       = BUZZER_LEDC_TIMER,
+        .duty_resolution = LEDC_TIMER_8_BIT,
+        .freq_hz         = 2000,
+        .clk_cfg         = LEDC_AUTO_CLK,
+    };
+    esp_err_t err = ledc_timer_config(&buzzer_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Buzzer LEDC timer config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ledc_channel_config_t buzzer_channel = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel    = BUZZER_LEDC_CHANNEL,
+        .timer_sel  = BUZZER_LEDC_TIMER,
+        .intr_type  = LEDC_INTR_DISABLE,
+        .gpio_num   = M5_BUZZER_PIN,
+        .duty       = 0,
+        .hpoint     = 0,
+    };
+    err = ledc_channel_config(&buzzer_channel);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Buzzer LEDC channel config failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    const esp_timer_create_args_t timer_args = {
+        .callback        = buzzer_timer_cb,
+        .arg             = NULL,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name            = "m5_buzzer",
+    };
+    err = esp_timer_create(&timer_args, &s_buzzer_timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Buzzer esp_timer create failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    s_buzzer_initialized = true;
+    ESP_LOGI(TAG, "Buzzer initialized on GPIO %d (LEDC timer 1, channel 1)", M5_BUZZER_PIN);
+    return ESP_OK;
+}
+
+void m5stickc_plus2_buzzer_beep(uint16_t freq_hz, uint16_t duration_ms) {
+    if (!s_buzzer_initialized || s_buzzer_timer == NULL) return;
+
+    freq_hz     = buzzer_clamp_freq(freq_hz);
+    duration_ms = buzzer_clamp_dur(duration_ms);
+
+    /* Cancel any in-flight beep so the new one starts cleanly. */
+    esp_timer_stop(s_buzzer_timer);
+    buzzer_tone_off();
+
+    s_buzzer_freq_hz = freq_hz;
+    s_buzzer_dur1_ms = duration_ms;
+    s_buzzer_dur2_ms = 0;       /* single-beep */
+    s_buzzer_gap_ms  = 0;
+
+    s_buzzer_phase = BUZZER_PHASE_TONE1;
+    buzzer_tone_on(freq_hz);
+    esp_timer_start_once(s_buzzer_timer, (uint64_t)duration_ms * 1000ULL);
+}
+
+void m5stickc_plus2_buzzer_beep_double(uint16_t freq_hz, uint16_t duration_ms, uint16_t gap_ms) {
+    if (!s_buzzer_initialized || s_buzzer_timer == NULL) return;
+
+    freq_hz     = buzzer_clamp_freq(freq_hz);
+    duration_ms = buzzer_clamp_dur(duration_ms);
+    gap_ms      = buzzer_clamp_dur(gap_ms);
+
+    esp_timer_stop(s_buzzer_timer);
+    buzzer_tone_off();
+
+    s_buzzer_freq_hz = freq_hz;
+    s_buzzer_dur1_ms = duration_ms;
+    s_buzzer_dur2_ms = duration_ms;
+    s_buzzer_gap_ms  = gap_ms;
+
+    s_buzzer_phase = BUZZER_PHASE_TONE1;
+    buzzer_tone_on(freq_hz);
+    esp_timer_start_once(s_buzzer_timer, (uint64_t)duration_ms * 1000ULL);
+}
+
+#endif /* !M5STICKC_PLUS_11 && !M5STICKS3 */

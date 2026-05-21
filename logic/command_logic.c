@@ -111,19 +111,12 @@ CommandResult send_command(uint8_t cmd_set, uint8_t cmd_id, uint8_t cmd_type, co
 
     ESP_LOGI(TAG, "Protocol frame created successfully, length: %zu", frame_length);
 
-    // Print ByteArray format for debugging
-    // 打印 ByteArray 格式，便于调试
-    printf("\033[96m");  // 设置青色输出
-    printf("TX: [");
-    for (size_t i = 0; i < frame_length; i++) {
-        printf("%02X", protocol_frame[i]);
-        if (i < frame_length - 1) {
-            printf(", ");
-        }
-    }
-    printf("]\n");
-    printf("\033[0m");
-    printf("\033[0;32m");
+    /* Removed: per-TX colorized hex printf. Same rationale as the RX
+     * print in data/data.c — at 2 Hz status push + every command, this
+     * was UART back-pressure on the console mutex. Leave a TRACE-level
+     * log line for ad-hoc debug; it stays out of shipping logs. */
+    ESP_LOGD(TAG, "TX frame (len=%zu, cmd_set=0x%02X, cmd_id=0x%02X, seq=0x%04X)",
+             frame_length, cmd_set, cmd_id, seq);
 
     void *structure_data = NULL;
     size_t structure_data_length = 0;
