@@ -33,7 +33,9 @@
 #include "motion_logic.h"
 #include "status_logic.h"
 #include "gps.h"
-#if defined(M5STICKS3)
+#if defined(M5ATOMS3)
+#include "m5atoms3_hal.h"
+#elif defined(M5STICKS3)
 #include "m5sticks3_hal.h"
 #elif defined(M5STICKC_PLUS_11)
 #include "m5stickc_plus11_hal.h"
@@ -82,7 +84,9 @@ void app_main(void) {
         ESP_LOGE(TAG, "Failed to initialize M5 hardware");
         return;
     }
-#if defined(M5STICKS3)
+#if defined(M5ATOMS3)
+    ESP_LOGI(TAG, "M5 AtomS3 hardware initialized");
+#elif defined(M5STICKS3)
     ESP_LOGI(TAG, "M5 StickS3 hardware initialized");
 #else
     ESP_LOGI(TAG, "M5StickC Plus2 hardware initialized");
@@ -257,16 +261,53 @@ void app_main(void) {
 
         /*
          * USER INPUT HANDLING
-         * Process physical button presses with debouncing
+         * Process physical button presses with debouncing.
+         *
+         * Two distinct flows live here:
+         *   - Plus2 / Plus 1.1 / StickS3: dedicated A and B buttons
+         *   - AtomS3: a single screen button measured by press duration —
+         *     short press (< 600 ms) = Next-screen, long press (>= 1500 ms)
+         *     = Execute-current-screen. See docs/ATOMS3_MIGRATION_SPEC.md (D-004).
          */
-        
+#if defined(M5ATOMS3)
+        {
+            static bool     s_btn_was_down  = false;
+            static uint32_t s_btn_hold_ms   = 0;
+            static bool     s_long_fired    = false;
+            const  uint32_t LONG_PRESS_MS   = 1500U;
+            const  uint32_t MAIN_LOOP_MS    = 50U;
+
+            bool down = m5stickc_plus2_button_a_pressed();
+            if (down) {
+                s_btn_hold_ms += MAIN_LOOP_MS;
+                /* Latch the long-press exactly once so we don't loop-fire it
+                 * while the user keeps holding. */
+                if (!s_long_fired && s_btn_hold_ms >= LONG_PRESS_MS) {
+                    ESP_LOGI(TAG, "AtomS3 long-press: executing current screen");
+                    ui_execute_current_screen();
+                    s_long_fired = true;
+                }
+                s_btn_was_down = true;
+            } else if (s_btn_was_down) {
+                /* Released — if no long-press was latched, this counts as a
+                 * short press and cycles to the next screen. */
+                if (!s_long_fired) {
+                    ESP_LOGI(TAG, "AtomS3 short-press: cycling screen");
+                    ui_next_screen();
+                }
+                s_btn_was_down = false;
+                s_btn_hold_ms  = 0;
+                s_long_fired   = false;
+            }
+        }
+#else
         /* Button A: Execute current screen function
          * Actions: Connect, Shutter, Mode change, Sleep, Wake
          */
         if (m5stickc_plus2_button_a_pressed()) {
             ESP_LOGI(TAG, "Button A pressed - selecting current option");
             ui_execute_current_screen();
-            
+
             /* Wait for button release to prevent multiple triggers */
             while (m5stickc_plus2_button_a_pressed()) {
                 vTaskDelay(pdMS_TO_TICKS(50));
@@ -280,13 +321,14 @@ void app_main(void) {
         if (m5stickc_plus2_button_b_pressed()) {
             ESP_LOGI(TAG, "Button B pressed - cycling to next option");
             ui_next_screen();
-            
+
             /* Wait for button release to prevent multiple triggers */
             while (m5stickc_plus2_button_b_pressed()) {
                 vTaskDelay(pdMS_TO_TICKS(50));
             }
             vTaskDelay(pdMS_TO_TICKS(200)); // Additional debounce delay
         }
+#endif /* M5ATOMS3 */
 
         /*
          * MOTION DETECTION + AUTO-RECORDING

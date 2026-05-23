@@ -2,7 +2,7 @@
  * DJI Camera Remote Control - M5StickC Plus2 Hardware Abstraction Layer
  * Compiled only when not building for M5Stick C Plus 1.1 (see m5stickc_plus11_hal.c).
  */
-#if !defined(M5STICKC_PLUS_11) && !defined(M5STICKS3)
+#if !defined(M5STICKC_PLUS_11) && !defined(M5STICKS3) && !defined(M5ATOMS3)
 
 /*
  * This file implements the complete hardware abstraction layer for the M5StickC Plus2
@@ -1349,4 +1349,4 @@ void m5stickc_plus2_buzzer_beep_double(uint16_t freq_hz, uint16_t duration_ms, u
     esp_timer_start_once(s_buzzer_timer, (uint64_t)duration_ms * 1000ULL);
 }
 
-#endif /* !M5STICKC_PLUS_11 && !M5STICKS3 */
+#endif /* !M5STICKC_PLUS_11 && !M5STICKS3 && !M5ATOMS3 */

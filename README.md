@@ -68,9 +68,10 @@ Practical offload options:
 
 ## Supported Hardware Targets
 
-- `M5StickC Plus2` (ESP32)
-- `M5StickC Plus 1.1` (ESP32, different LCD control pins)
-- `M5 StickS3` (ESP32-S3, BMI270, Unit GPS v1.1 on Grove PORT.A)
+- `M5StickC Plus2` (ESP32, MPU6886)
+- `M5StickC Plus 1.1` (ESP32, MPU6886, different LCD control pins)
+- `M5 StickS3` (ESP32-S3, BMI270, Unit GPS v1.1 on Grove PORT.A G9/G10)
+- `M5 AtomS3` (ESP32-S3, MPU6886, 128×128 IPS, Unit GPS v1.1 on HY2.0 PORT.A G2/G1) — minimal two-screen UI; see [`docs/ATOMS3_MIGRATION_SPEC.md`](docs/ATOMS3_MIGRATION_SPEC.md).
 
 Build target selection is done through PlatformIO environments in `platformio.ini`.
 
@@ -116,6 +117,10 @@ pio run -e m5stickc_plus11 -t upload
 # M5 StickS3
 pio run -e m5sticks3
 pio run -e m5sticks3 -t upload
+
+# M5 AtomS3
+pio run -e m5atoms3
+pio run -e m5atoms3 -t upload
 ```
 
 If `pio` is not on `PATH`:
@@ -128,6 +133,7 @@ If `pio` is not on `PATH`:
 
 - `./scripts/build_and_upload_plus11.sh`
 - `./scripts/build_and_upload_sticks3.sh`
+- `./scripts/build_and_upload_atoms3.sh`
 - `./scripts/capture_logs.sh`
 - `python3 scripts/capture_serial.py 40 .cursor/debug-7ee220.log`
 
@@ -141,7 +147,8 @@ Flashing the wrong build target commonly causes blank/corrupt display output.
 ### GPS behavior
 
 - Plus2 / Plus 1.1: current GPS path is a stub
-- StickS3: reads NMEA from Unit GPS v1.1 over UART
+- StickS3: reads NMEA from Unit GPS v1.1 over UART (TX=G9, RX=G10)
+- AtomS3: reads NMEA from Unit GPS v1.1 over UART on HY2.0 PORT.A (TX=G2, RX=G1)
 
 ## Development Workflow
 

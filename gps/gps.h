@@ -19,12 +19,22 @@
 #include <stdint.h>
 
 /*
- * StickS3 + Unit GPS v1.1 on HY2.0 PORT.A: Yellow = module RX ← ESP TX, White = module TX → ESP RX.
- * M5StickC Plus: stub still uses placeholder pins (real UART not enabled in gps.c for those builds).
+ * UART pin selection per board:
+ *   StickS3 + Unit GPS v1.1 on HY2.0 PORT.A: Yellow = module RX ← ESP TX (G9),
+ *                                            White  = module TX → ESP RX (G10).
+ *   AtomS3  + Unit GPS v1.1 on HY2.0 PORT.A: Yellow = ESP TX (G2),
+ *                                            White  = ESP RX (G1). Refs R1, R8, R9.
+ *   M5StickC Plus: stub still uses placeholder pins (real UART not enabled in
+ *   gps.c for those builds).
  */
-#ifdef M5STICKS3
+#if defined(M5STICKS3)
 #define GPS_UART_TX_PIN   9
 #define GPS_UART_RX_PIN   10
+#define GPS_USE_REAL_UART 1
+#elif defined(M5ATOMS3)
+#define GPS_UART_TX_PIN   2
+#define GPS_UART_RX_PIN   1
+#define GPS_USE_REAL_UART 1
 #else
 #define GPS_UART_TX_PIN   0
 #define GPS_UART_RX_PIN   26

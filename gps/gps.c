@@ -1,6 +1,11 @@
 /*
- * GPS — M5 StickS3: UART NMEA from Unit GPS v1.1 on Grove PORT.A.
+ * GPS — Real UART NMEA path: M5 StickS3 (Grove PORT.A G9/G10) and
+ *                            M5 AtomS3 (HY2.0 PORT.A G2/G1).
  * Other targets: Zurich stub for BLE GPS push testing.
+ *
+ * The compile-time switch is GPS_USE_REAL_UART (defined in gps.h based on
+ * the active board target). Adding a new board with real GPS just means
+ * mapping its UART pins and setting GPS_USE_REAL_UART in gps.h.
  */
 
 #include "gps.h"
@@ -9,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef M5STICKS3
+#ifdef GPS_USE_REAL_UART
 #include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -18,8 +23,8 @@
 
 #define TAG "GPS"
 
-#ifndef M5STICKS3
-/* Stub fix: Zurich, Switzerland (M5StickC Plus builds) */
+#ifndef GPS_USE_REAL_UART
+/* Stub fix: Zurich, Switzerland (M5StickC Plus builds without a real GPS module). */
 #define GPS_STUB_LATITUDE    47.3769f
 #define GPS_STUB_LONGITUDE    8.5417f
 #define GPS_STUB_ALTITUDE   408.0f
@@ -27,7 +32,7 @@
 
 static gps_data_t s_data = {0};
 
-#ifdef M5STICKS3
+#ifdef GPS_USE_REAL_UART
 
 #define GPS_UART_NUM       UART_NUM_1
 /* Unit GPS v1.1 (AT6668/ATGM336H) ships at 115200 8N1; older Unit GPS (AT6558) is 9600.
@@ -357,10 +362,10 @@ static void gps_uart_task(void *arg) {
     }
 }
 
-#endif /* M5STICKS3 */
+#endif /* GPS_USE_REAL_UART */
 
 void gps_init(void) {
-#ifdef M5STICKS3
+#ifdef GPS_USE_REAL_UART
     memset(&s_data, 0, sizeof(s_data));
     s_gps_mutex = xSemaphoreCreateMutex();
     if (s_gps_mutex == NULL) {
@@ -416,7 +421,7 @@ void gps_init(void) {
 }
 
 bool gps_has_fix(void) {
-#ifdef M5STICKS3
+#ifdef GPS_USE_REAL_UART
     bool f = false;
     if (s_gps_mutex && xSemaphoreTake(s_gps_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         f = s_data.has_fix;
@@ -432,7 +437,7 @@ void gps_get_data(gps_data_t *out) {
     if (out == NULL) {
         return;
     }
-#ifdef M5STICKS3
+#ifdef GPS_USE_REAL_UART
     if (s_gps_mutex && xSemaphoreTake(s_gps_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
         *out = s_data;
         xSemaphoreGive(s_gps_mutex);

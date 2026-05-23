@@ -34,7 +34,9 @@
  */
 
 #include "ui.h"
-#if defined(M5STICKS3)
+#if defined(M5ATOMS3)
+#include "m5atoms3_hal.h"
+#elif defined(M5STICKS3)
 #include "m5sticks3_hal.h"
 #elif defined(M5STICKC_PLUS_11)
 #include "m5stickc_plus11_hal.h"
@@ -124,6 +126,14 @@ static void ui_cancel_toast(void) {
 
 /* Forward declarations for partial-update cache invalidation helper. */
 static void ui_auto_status_cache_invalidate(void);
+
+#if defined(M5ATOMS3)
+/* Forward declaration for the AtomS3 minimal renderer (defined further down
+ * in this file under #ifdef M5ATOMS3). Both ui_update_display() and
+ * ui_update_auto_status_line_only() short-circuit to atoms3_render() when
+ * built for AtomS3. */
+static void atoms3_render(bool force_full);
+#endif
 
 /* Logging tag for ESP_LOG functions */
 #define TAG "UI"
@@ -515,9 +525,12 @@ static void gpio_monitor_task(void* pvParameters) {
  * @return ESP_OK on success, ESP_ERR_* on failure
  */
 static esp_err_t init_gpio_system(void) {
-#if defined(M5STICKS3)
-    /* ESP32-S3: GPIO 25–32 are tied to SPI flash / OPI PSRAM; G25/G26 triggers are invalid here. */
-    ESP_LOGI(TAG, "M5 StickS3: GPIO triggers skipped (no Plus2 G0/G25/G26 routing)");
+#if defined(M5STICKS3) || defined(M5ATOMS3)
+    /* ESP32-S3 family (StickS3 / AtomS3): GPIO 25–32 are tied to SPI flash / OPI PSRAM
+     * on StickS3 and the AtomS3 routes its 6 user GPIOs differently. The Plus2-style
+     * G0/G25/G26 external-trigger wiring does not apply here; the single screen button
+     * (AtomS3) or A/B buttons (StickS3) drive UI navigation instead. */
+    ESP_LOGI(TAG, "ESP32-S3 build: external GPIO triggers skipped (no Plus2 G0/G25/G26 routing)");
     return ESP_OK;
 #else
     esp_err_t ret = ESP_OK;
@@ -623,7 +636,7 @@ static esp_err_t init_gpio_system(void) {
     ESP_LOGI(TAG, "  G25 (WAKE): Pull HIGH to trigger");
     
     return ESP_OK;
-#endif /* !M5STICKS3 */
+#endif /* !(M5STICKS3 || M5ATOMS3) */
 }
 
 /**
@@ -1064,17 +1077,43 @@ void ui_init(void) {
  * for M5StickC Plus2 (240x135 resolution).
  */
 void ui_detect_device_and_set_scale(void) {
+#if defined(M5ATOMS3)
+    /* AtomS3: 128x128 panel. The Plus2/StickS3 layout (240x135) does not fit;
+     * we use a compact two-screen layout (BT, AUTO) with smaller coordinates.
+     * is_plus2_device is left false so existing scale-1 code paths apply. */
+    g_ui_state.is_plus2_device = false;
+    g_ui_state.scale_factor = 1.0f;
+    g_ui_state.scaled_text_size = 2;
+
+    ESP_LOGI(TAG, "Detected: M5 AtomS3 (128x128)");
+
+    /* Layout for 128x128. Icons (32px) center at x=48; navigation dots are
+     * intentionally pushed off-screen (y>=128) so the dot loop in
+     * ui_update_display() effectively becomes a no-op without further #ifdef. */
+    g_layout.icon_x = (128 - 32) / 2;
+    g_layout.icon_y = 22;
+    g_layout.text_x = 128 / 2;
+    g_layout.text_y = g_layout.icon_y + 32 + 6;
+    g_layout.status_x = 110;
+    g_layout.status_y = 4;
+    g_layout.connection_radius = 5;
+    g_layout.dots_y = 200;        /* off-screen — no nav dots on 128x128 */
+    g_layout.dots_spacing = 20;
+    g_layout.dots_start_x = 20;
+    g_layout.instruct_x = 4;
+    g_layout.instruct_y = 4;
+#else
     /* M5StickC Plus2: 240x135 display, original M5StickC: 160x80 display
      * Currently targeting Plus2 hardware exclusively
      */
     g_ui_state.is_plus2_device = true;
     g_ui_state.scale_factor = 1.5f;
     g_ui_state.scaled_text_size = 2;
-    
+
     ESP_LOGI(TAG, "Detected: M5StickC Plus2 (240x135)");
-    ESP_LOGI(TAG, "Scale factor: %.1f, Text size: %d", 
+    ESP_LOGI(TAG, "Scale factor: %.1f, Text size: %d",
              g_ui_state.scale_factor, g_ui_state.scaled_text_size);
-    
+
     /* Configure screen layout coordinates for M5StickC Plus2 (240x135 resolution)
      * All positions calculated for optimal visual balance and readability
      */
@@ -1090,6 +1129,7 @@ void ui_detect_device_and_set_scale(void) {
     g_layout.dots_start_x = 45;                 /* Starting x position for screen dots */
     g_layout.instruct_x = 8;                    /* Instruction text position */
     g_layout.instruct_y = 8;
+#endif
 }
 
 /**
@@ -1180,11 +1220,22 @@ int ui_get_text_width(const char* text, int text_size) {
  * screen; the green/red/yellow icon + active nav dot already identify it,
  * and the freed row lets the status pill be big and unambiguous.
  */
+#if defined(M5ATOMS3)
+/* AtomS3: 128x128 panel, smaller AUTO pill / GPS row to fit. The pill stack
+ * sits below the 32x32 icon (icon ends at icon_y+32 ≈ 54) and uses the lower
+ * half of the screen for the recording state pill + GPS line. */
+#define AUTO_PILL_X    4
+#define AUTO_PILL_Y    62
+#define AUTO_PILL_W    (128 - 2 * AUTO_PILL_X)   /* = 120 px wide */
+#define AUTO_PILL_H    24
+#define AUTO_GPS_Y     104                        /* scale-1 GPS row, leaves 8px below */
+#else
 #define AUTO_PILL_X    8
 #define AUTO_PILL_Y    78
 #define AUTO_PILL_W    (240 - 2 * AUTO_PILL_X)   /* = 224 px wide */
 #define AUTO_PILL_H    28
 #define AUTO_GPS_Y     112                        /* scale-1 GPS row, ends y≈120, 4 px above dots band */
+#endif
 
 /* Pre-computed state info for the AUTO status pill. */
 typedef struct {
@@ -1321,6 +1372,13 @@ void ui_update_auto_status_line_only(void) {
      * invalidation set in ui_show_message(). */
     if (ui_toast_active()) return;
 
+#if defined(M5ATOMS3)
+    /* AtomS3: forward to the minimal renderer; it diffs internally and
+     * only repaints the regions whose value changed. */
+    atoms3_render(false);
+    return;
+#endif
+
     char scratch[24];
     auto_pill_info_t info;
     auto_compute_pill(&info, scratch, sizeof(scratch));
@@ -1373,6 +1431,268 @@ void ui_update_auto_status_line_only(void) {
     s_auto_init = true;
 }
 
+#if defined(M5ATOMS3)
+/* ── AtomS3 minimal renderer (D-008..D-013) ────────────────────────────────────
+ *
+ * Goals (per docs/ATOMS3_DECISIONS.md):
+ *   - No icons / nav dots / instruction strip (D-008).
+ *   - 3-tier type scale: HERO scale-3, VALUE scale-2, LABEL scale-1 (D-009).
+ *   - All paint calls use M5_TRUE_* aliases (D-010).
+ *   - One accent color per state (D-011).
+ *   - No full-screen clear during steady-state updates — partial diff redraws
+ *     only (D-012). Full clear only on a screen change.
+ *   - Hard-clip every text draw so words never wrap or run past the edge (D-013).
+ *
+ * The renderer is called from both ui_update_display() (full path) and
+ * ui_update_auto_status_line_only() (partial path) so the main-loop poll
+ * cadence does not change.
+ *
+ * References: R11 (Pebble fonts), R12 (BRUTAL hierarchy), R13 (Qt embedded),
+ *             R14 (mixed-size micro-typography).
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/* Margins / coordinates for the 128×128 layout. */
+#define ATOMS3_MARGIN_X         4
+#define ATOMS3_LABEL_Y          4                /* top tag (BT / AUTO)         */
+#define ATOMS3_HERO_Y           36               /* large state word            */
+#define ATOMS3_VALUE_Y          (ATOMS3_HERO_Y + 28) /* below hero (24 + 4 gap) */
+#define ATOMS3_HINT_Y           (M5_LCD_V_RES - 12)  /* bottom hint row         */
+#define ATOMS3_DOT_X            (M5_LCD_H_RES - 10)
+#define ATOMS3_DOT_Y            (ATOMS3_LABEL_Y + 1)
+#define ATOMS3_DOT_SIZE         6
+
+/* Cache of the last-rendered state so the steady-state path can early-out
+ * when nothing has changed. */
+typedef struct {
+    bool                initialized;
+    ui_screen_t         screen;
+    connect_state_t     conn;
+    bool                rec;
+    bool                armed;
+    uint32_t            countdown;
+    bool                fix;
+    uint32_t            sats;
+    char                hero[16];
+    char                value[16];
+    char                hint[24];
+    uint16_t            hero_color;
+} atoms3_cache_t;
+
+static atoms3_cache_t s_atoms3 = { .initialized = false };
+
+/* Truncate a string in-place so its rendered width fits `max_px` at the
+ * given scale. Returns the (possibly shortened) string for chaining. */
+static const char *atoms3_clip_text(char *buf, int max_px, int scale) {
+    if (buf == NULL || max_px <= 0) return "";
+    int char_px = 8 * scale;
+    int max_chars = max_px / char_px;
+    if (max_chars < 1) max_chars = 1;
+    if ((int)strlen(buf) > max_chars) {
+        if (max_chars >= 1) {
+            buf[max_chars] = '\0';
+        }
+    }
+    return buf;
+}
+
+/* Draw a single text line, clearing its row first so a previous, longer
+ * value can't leave ghost pixels. The row is `8 * scale + 1` rows tall. */
+static void atoms3_draw_line(int x, int y, const char *text, uint16_t color, int scale) {
+    int row_h = 8 * scale + 1;
+    m5stickc_plus2_display_fill_rect(0, y, M5_LCD_H_RES, row_h, M5_COLOR_BLACK);
+    m5stickc_plus2_display_print_scaled(x, y, text, color, scale);
+}
+
+/* Centered version: pre-measures, clips to the available width, then draws. */
+static void atoms3_draw_line_centered(int y, char *buf, uint16_t color, int scale) {
+    int avail = M5_LCD_H_RES - 2 * ATOMS3_MARGIN_X;
+    atoms3_clip_text(buf, avail, scale);
+    int w = ui_get_text_width(buf, scale);
+    int x = (M5_LCD_H_RES - w) / 2;
+    if (x < ATOMS3_MARGIN_X) x = ATOMS3_MARGIN_X;
+    atoms3_draw_line(x, y, buf, color, scale);
+}
+
+/* Top-right colored connection dot. Cleared first to avoid a stale color. */
+static void atoms3_draw_conn_dot(connect_state_t conn) {
+    uint16_t c;
+    switch (conn) {
+        case PROTOCOL_CONNECTED: c = M5_TRUE_GREEN;     break;
+        case BLE_CONNECTED:      c = M5_TRUE_YELLOW;    break;
+        case BLE_SEARCHING:      c = M5_TRUE_YELLOW;    break;
+        default:                 c = M5_COLOR_DARKGREY; break;
+    }
+    m5stickc_plus2_display_fill_rect(ATOMS3_DOT_X - 1, ATOMS3_DOT_Y - 1,
+                                     ATOMS3_DOT_SIZE + 2, ATOMS3_DOT_SIZE + 2,
+                                     M5_COLOR_BLACK);
+    m5stickc_plus2_display_fill_rect(ATOMS3_DOT_X, ATOMS3_DOT_Y,
+                                     ATOMS3_DOT_SIZE, ATOMS3_DOT_SIZE, c);
+}
+
+/* Compose the BT-screen hero word + accent color for a given connect state. */
+static void atoms3_compose_bt(char *out_hero, size_t hero_sz, uint16_t *out_color,
+                              connect_state_t conn) {
+    switch (conn) {
+        case PROTOCOL_CONNECTED:
+            snprintf(out_hero, hero_sz, "ONLINE");
+            *out_color = M5_TRUE_GREEN;
+            break;
+        case BLE_CONNECTED:
+            snprintf(out_hero, hero_sz, "LINKING");
+            *out_color = M5_TRUE_YELLOW;
+            break;
+        case BLE_SEARCHING:
+            snprintf(out_hero, hero_sz, "FINDING");
+            *out_color = M5_TRUE_YELLOW;
+            break;
+        case BLE_INIT_COMPLETE:
+        default:
+            snprintf(out_hero, hero_sz, "OFFLINE");
+            *out_color = M5_COLOR_DARKGREY;
+            break;
+    }
+}
+
+/* Compose the AUTO-screen hero word + accent for the current motion state. */
+static void atoms3_compose_auto(char *out_hero, size_t hero_sz,
+                                char *out_value, size_t value_sz,
+                                uint16_t *out_color,
+                                bool armed, bool recording, uint32_t countdown) {
+    out_value[0] = '\0';
+    if (!armed) {
+        snprintf(out_hero, hero_sz, "OFF");
+        *out_color = M5_COLOR_DARKGREY;
+    } else if (recording && countdown > 0U) {
+        snprintf(out_hero, hero_sz, "STOP");
+        snprintf(out_value, value_sz, "%lu:%02lu",
+                 (unsigned long)(countdown / 60U),
+                 (unsigned long)(countdown % 60U));
+        *out_color = M5_TRUE_YELLOW;
+    } else if (recording) {
+        snprintf(out_hero, hero_sz, "REC");
+        *out_color = M5_TRUE_GREEN;
+    } else {
+        snprintf(out_hero, hero_sz, "WAIT");
+        *out_color = M5_COLOR_GREY;
+    }
+}
+
+/* Compose the bottom-row hint for either screen. */
+static void atoms3_compose_hint(char *out, size_t out_sz, ui_screen_t screen) {
+    if (screen == SCREEN_CONNECT) {
+        snprintf(out, out_sz, "HOLD = PAIR");
+    } else {
+        gps_data_t gps;
+        gps_get_data(&gps);
+        if (gps.has_fix) {
+            snprintf(out, out_sz, "GPS OK %u",
+                     (unsigned)gps.satellite_count);
+        } else if (gps.satellite_count > 0) {
+            snprintf(out, out_sz, "GPS %u sat",
+                     (unsigned)gps.satellite_count);
+        } else {
+            snprintf(out, out_sz, "NO GPS");
+        }
+    }
+}
+
+static void atoms3_render(bool force_full) {
+    /* Toast still has the screen — leave it alone. The toast logic in
+     * ui_show_message() has already cleared and printed. */
+    if (ui_toast_active()) return;
+
+    if (s_disp_mutex && xSemaphoreTake(s_disp_mutex, pdMS_TO_TICKS(150)) != pdTRUE) {
+        return;
+    }
+
+    /* On screen change (or first call ever), do a one-time full clear and
+     * redraw the static label tag + the dot. After that, every redraw is
+     * region-only — no full-screen flash. */
+    bool screen_changed = !s_atoms3.initialized || s_atoms3.screen != g_ui_state.current_screen;
+    bool full = force_full || screen_changed;
+
+    if (full) {
+        m5stickc_plus2_display_fill_rect(0, 0, M5_LCD_H_RES, M5_LCD_V_RES, M5_COLOR_BLACK);
+        const char *tag = (g_ui_state.current_screen == SCREEN_AUTO) ? "AUTO" : "BT";
+        m5stickc_plus2_display_print(ATOMS3_MARGIN_X, ATOMS3_LABEL_Y, tag, M5_COLOR_WHITE);
+        s_atoms3.initialized = true;
+        s_atoms3.screen = g_ui_state.current_screen;
+        /* Force every region cache miss so the diff path repaints
+         * everything once after the clear. */
+        s_atoms3.conn = (connect_state_t)-1;
+        s_atoms3.rec = !is_camera_recording();
+        s_atoms3.armed = !motion_logic_is_armed();
+        s_atoms3.countdown = 0xFFFFFFFFu;
+        s_atoms3.fix = !true;
+        s_atoms3.sats = 0xFFFFFFFFu;
+        s_atoms3.hero[0] = '\0';
+        s_atoms3.value[0] = '\0';
+        s_atoms3.hint[0] = '\0';
+        s_atoms3.hero_color = 0;
+    }
+
+    connect_state_t conn = connect_logic_get_state();
+
+    /* Connection dot — only repaint when state class changes. */
+    if (conn != s_atoms3.conn) {
+        atoms3_draw_conn_dot(conn);
+        s_atoms3.conn = conn;
+    }
+
+    char     hero[16]  = "";
+    char     value[16] = "";
+    uint16_t hero_color = M5_COLOR_WHITE;
+
+    if (g_ui_state.current_screen == SCREEN_CONNECT) {
+        atoms3_compose_bt(hero, sizeof(hero), &hero_color, conn);
+    } else {
+        bool armed     = motion_logic_is_armed();
+        bool rec       = is_camera_recording();
+        uint32_t cdown = motion_logic_get_stop_countdown_sec_remaining();
+        atoms3_compose_auto(hero, sizeof(hero), value, sizeof(value),
+                            &hero_color, armed, rec, cdown);
+        s_atoms3.armed     = armed;
+        s_atoms3.rec       = rec;
+        s_atoms3.countdown = cdown;
+    }
+
+    /* HERO line (scale 3) — repaint only when text or color changed. */
+    if (full
+        || strncmp(hero, s_atoms3.hero, sizeof(s_atoms3.hero)) != 0
+        || hero_color != s_atoms3.hero_color) {
+        atoms3_draw_line_centered(ATOMS3_HERO_Y, hero, hero_color, 3);
+        strncpy(s_atoms3.hero, hero, sizeof(s_atoms3.hero) - 1);
+        s_atoms3.hero[sizeof(s_atoms3.hero) - 1] = '\0';
+        s_atoms3.hero_color = hero_color;
+    }
+
+    /* VALUE line (scale 2) — only used by AUTO when there is a countdown. */
+    if (full || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0) {
+        if (value[0] != '\0') {
+            atoms3_draw_line_centered(ATOMS3_VALUE_Y, value, M5_TRUE_YELLOW, 2);
+        } else {
+            /* Just clear the row so a previous countdown doesn't linger. */
+            m5stickc_plus2_display_fill_rect(0, ATOMS3_VALUE_Y, M5_LCD_H_RES, 17,
+                                             M5_COLOR_BLACK);
+        }
+        strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
+        s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
+    }
+
+    /* HINT line (scale 1) — bottom row. */
+    char hint[24];
+    atoms3_compose_hint(hint, sizeof(hint), g_ui_state.current_screen);
+    if (full || strncmp(hint, s_atoms3.hint, sizeof(s_atoms3.hint)) != 0) {
+        atoms3_draw_line_centered(ATOMS3_HINT_Y, hint, M5_COLOR_GREY, 1);
+        strncpy(s_atoms3.hint, hint, sizeof(s_atoms3.hint) - 1);
+        s_atoms3.hint[sizeof(s_atoms3.hint) - 1] = '\0';
+    }
+
+    g_ui_state.display_needs_update = false;
+    if (s_disp_mutex) xSemaphoreGive(s_disp_mutex);
+}
+#endif /* M5ATOMS3 */
+
 /**
  * @brief Update display with current UI state
  * 
@@ -1392,13 +1712,22 @@ void ui_update_display(void) {
 
     /* Toast just expired (was drawn, deadline passed) — force a fresh
      * full repaint of the underlying screen so the user transitions
-     * smoothly back from the message. */
+     * smoothly back from the message. atoms3_render() treats
+     * display_needs_update as the force_full signal. */
     if (s_toast_was_drawn) {
         s_toast_was_drawn = false;
         s_toast_deadline  = 0;
         ui_auto_status_cache_invalidate();
         g_ui_state.display_needs_update = true;
     }
+
+#if defined(M5ATOMS3)
+    /* AtomS3 path: minimal text-first renderer with diff-based repaint.
+     * Always run — atoms3_render() early-outs cheaply when nothing changed,
+     * and a screen change forces a one-time full repaint internally. */
+    atoms3_render(g_ui_state.display_needs_update);
+    return;
+#endif
 
     if (!g_ui_state.display_needs_update) {
         return;
@@ -1410,15 +1739,19 @@ void ui_update_display(void) {
         return;
     }
 
-    /* Clear entire display to prevent visual artifacts */
-    m5stickc_plus2_display_fill_rect(0, 0, 240, 135, M5_COLOR_BLACK);
-    
+    /* Clear entire display to prevent visual artifacts. Use the HAL-defined
+     * resolution (M5_LCD_H_RES x M5_LCD_V_RES) so this works on 240x135 Stick
+     * panels and 128x128 AtomS3 alike. */
+    m5stickc_plus2_display_fill_rect(0, 0, M5_LCD_H_RES, M5_LCD_V_RES, M5_COLOR_BLACK);
+
     /* Draw connection status indicator in top-right corner */
     ui_draw_connection_status();
-    
+
+#if !defined(M5ATOMS3)
     /* Draw screen navigation indicators at bottom of display
-     * Shows current screen position and total available screens
-     */
+     * Shows current screen position and total available screens.
+     * AtomS3 has only two screens and a 128x128 panel — there's no room
+     * (and no value) in drawing nav dots there. */
     for (int i = 0; i < SCREEN_COUNT; i++) {
         int x = g_layout.dots_start_x + (i * g_layout.dots_spacing);
         int y = g_layout.dots_y;
@@ -1427,7 +1760,7 @@ void ui_update_display(void) {
          * them visible as page indicators without the line illusion. */
         int dot_size = g_ui_state.is_plus2_device ? 5 : 4;
         int inactive_size = g_ui_state.is_plus2_device ? 3 : 3;
-        
+
         if (i == g_ui_state.current_screen) {
             /* Current screen - larger white rectangle */
             m5stickc_plus2_display_fill_rect(x - dot_size/2, y - dot_size/2, dot_size, dot_size, M5_COLOR_WHITE);
@@ -1436,6 +1769,7 @@ void ui_update_display(void) {
             m5stickc_plus2_display_fill_rect(x - inactive_size/2, y - inactive_size/2, inactive_size, inactive_size, M5_COLOR_DARKGREY);
         }
     }
+#endif /* !M5ATOMS3 */
     
     /* Get information for currently selected screen */
     const screen_info_t* screen = &screen_info[g_ui_state.current_screen];
@@ -1465,9 +1799,17 @@ void ui_update_display(void) {
     }
 
     /* Display button instructions in top-left corner */
+#if defined(M5ATOMS3)
+    /* AtomS3 has a single screen-button — the instruction line tells the
+     * operator that short cycles screens and long acts on the current one. */
+    const char *instruct = (g_ui_state.current_screen == SCREEN_AUTO)
+        ? "S:swap L:rec"
+        : "S:swap L:bt";
+#else
     const char *instruct = (g_ui_state.current_screen == SCREEN_AUTO)
         ? "A:Toggle  B:Next"
         : "A:Run     B:Next";
+#endif
     m5stickc_plus2_display_print(g_layout.instruct_x, g_layout.instruct_y, instruct, M5_COLOR_GREY);
 
     /* Belt-and-braces: explicitly clear the bottom 2 rows so any prior render
@@ -1494,7 +1836,15 @@ void ui_next_screen(void) {
     ui_cancel_toast();
     ui_auto_status_cache_invalidate();
 
+#if defined(M5ATOMS3)
+    /* AtomS3 ships a minimal two-screen UI: BT (CONNECT) and AUTO. Anything
+     * else (SHUTTER/MODE/SLEEP/WAKE) is hidden — short press toggles only
+     * between these two. See docs/ATOMS3_MIGRATION_SPEC.md (D-005). */
+    g_ui_state.current_screen =
+        (g_ui_state.current_screen == SCREEN_AUTO) ? SCREEN_CONNECT : SCREEN_AUTO;
+#else
     g_ui_state.current_screen = (g_ui_state.current_screen + 1) % SCREEN_COUNT;
+#endif
     g_ui_state.display_needs_update = true;
     ESP_LOGI(TAG, "Switched to screen: %d (%s)",
              g_ui_state.current_screen, screen_info[g_ui_state.current_screen].name);
