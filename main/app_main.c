@@ -66,6 +66,27 @@
  * 
  * @note This function never returns under normal operation
  */
+/* ── Pending-stop retry state (visible to ui.c via app_main.h) ────────────────
+ * Camera occasionally ignores a one-shot stop_record (field-observed
+ * 2026-05-26). Any path that sends stop_record should also call
+ * app_request_pending_stop(); the main loop ticks down the retries until the
+ * status push reports !is_camera_recording() or the retry budget expires.
+ * Asymmetric to start_record by design — see comment in the main loop.
+ */
+static volatile bool     s_pending_stop          = false;
+static volatile uint32_t s_pending_stop_last_ms  = 0U;
+static volatile uint8_t  s_pending_stop_retries  = 0U;
+static const    uint32_t PENDING_STOP_RETRY_MS   = 1500U;
+static const    uint8_t  PENDING_STOP_MAX_RETRIES = 5U;
+
+void app_request_pending_stop(void) {
+    /* Idempotent — calling this while a stop is already pending is fine; the
+     * tick logic only retries while is_camera_recording() == true. */
+    s_pending_stop         = true;
+    s_pending_stop_last_ms = 0U;
+    s_pending_stop_retries = 0U;
+}
+
 void app_main(void) {
     static const char *TAG = "MAIN";
     int res = 0;
@@ -207,7 +228,10 @@ void app_main(void) {
     static const uint32_t FLOW_LOG_INTERVAL_MS = 2000U;
     static uint32_t s_auto_tick = 0U;
     static const uint32_t AUTO_SAMPLE_INTERVAL_MS = 500U;
-    
+
+    /* See module-static `s_pending_stop_*` defined above this function for
+     * the pending-stop retry state. The main loop ticks it every iteration
+     * and the manual-stop path in ui.c arms it via app_request_pending_stop(). */
     while (1) {
         if (g_pending_set_video_mode_after_connect && connect_logic_get_state() == PROTOCOL_CONNECTED) {
             g_pending_set_video_mode_after_connect = false;
@@ -390,6 +414,42 @@ void app_main(void) {
                 ESP_LOGI("FLOW", "motion_stopped → stop_record (camera stays awake)");
                 (void)command_logic_stop_record();
                 s_is_recording = false;
+                /* Arm the periodic-retry watchdog: if the camera ignores
+                 * this single stop, the main loop below will re-send. */
+                s_pending_stop         = true;
+                s_pending_stop_last_ms = 0U;  /* will trigger next tick */
+                s_pending_stop_retries = 0U;
+            }
+        }
+
+        /* Pending-stop retry loop. Camera occasionally swallows a one-shot
+         * stop; we re-issue stop_record at PENDING_STOP_RETRY_MS until the
+         * status push tells us recording stopped, or the retry budget
+         * expires. */
+        if (s_pending_stop) {
+            if (!is_camera_recording()) {
+                ESP_LOGI("FLOW", "pending_stop cleared after %u retries — camera reports stopped",
+                         (unsigned)s_pending_stop_retries);
+                s_pending_stop         = false;
+                s_pending_stop_last_ms = 0U;
+                s_pending_stop_retries = 0U;
+            } else {
+                s_pending_stop_last_ms += 50U;
+                if (s_pending_stop_last_ms >= PENDING_STOP_RETRY_MS) {
+                    s_pending_stop_last_ms = 0U;
+                    if (s_pending_stop_retries >= PENDING_STOP_MAX_RETRIES) {
+                        ESP_LOGE("FLOW", "pending_stop GAVE UP after %u retries — camera still recording",
+                                 (unsigned)s_pending_stop_retries);
+                        s_pending_stop         = false;
+                        s_pending_stop_retries = 0U;
+                    } else if (connect_logic_get_state() == PROTOCOL_CONNECTED) {
+                        s_pending_stop_retries++;
+                        ESP_LOGW("FLOW", "pending_stop retry %u/%u — re-sending stop_record",
+                                 (unsigned)s_pending_stop_retries,
+                                 (unsigned)PENDING_STOP_MAX_RETRIES);
+                        (void)command_logic_stop_record();
+                    }
+                }
             }
         }
 

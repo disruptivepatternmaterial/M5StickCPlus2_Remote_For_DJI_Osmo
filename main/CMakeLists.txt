@@ -20,6 +20,7 @@ idf_component_register(SRCS "app_main.c"
                             "m5stickc_plus11_hal.c"
                             "m5sticks3_hal.c"
                             "m5atoms3_hal.c"
+                            "m5atoms3_gfx.cpp"
                     PRIV_REQUIRES bt nvs_flash led_strip esp_lcd driver
                     INCLUDE_DIRS "." "../utils/crc" "../protocol" "../ble" "../data" "../logic" "../gps")
 

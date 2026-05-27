@@ -73,26 +73,32 @@ void m5stickc_plus2_buzzer_beep_double(uint16_t freq_hz, uint16_t duration_ms, u
 int  m5stickc_plus2_imu_init(void);
 int  m5stickc_plus2_imu_read_accel(float *ax, float *ay, float *az);
 
-/* ── Color constants. The AtomS3 panel is configured BGR (ref R4); reuse the
- * same M5_TRUE_* aliases the StickS3 HAL exposes so feature code does not have
- * to know about element-order swaps. */
+/* ── Color constants — standard RGB565 (M5GFX path).
+ *
+ * The previous esp_lcd path on AtomS3 was configured with BGR element order,
+ * which forced an awkward swap workaround inside the constants here (RED was
+ * actually 0x001F because the panel reordered to BGR on the way out, etc.).
+ * Now that M5GFX owns the panel init, it emits standard RGB565 over the wire
+ * and the constants below are the plain, textbook values. M5_TRUE_* are kept
+ * as aliases of M5_COLOR_* so existing call sites keep compiling.
+ */
 #define M5_COLOR_BLACK      0x0000
 #define M5_COLOR_WHITE      0xFFFF
-#define M5_COLOR_RED        0xF800
-#define M5_COLOR_GREEN      0x001F
-#define M5_COLOR_BLUE       0x07E0
-#define M5_COLOR_YELLOW     0xF81F
-#define M5_COLOR_CYAN       0x07FF
-#define M5_COLOR_MAGENTA    0xFFE0
-#define M5_COLOR_ORANGE     0xF81F
-#define M5_COLOR_PURPLE     0x8010
-#define M5_COLOR_DARKGREY   0x39C6
-#define M5_COLOR_GREY       0x7BEF
+#define M5_COLOR_RED        0xF800   /* R=31                       */
+#define M5_COLOR_GREEN      0x07E0   /* G=63                       */
+#define M5_COLOR_BLUE       0x001F   /* B=31                       */
+#define M5_COLOR_YELLOW     0xFFE0   /* R=31, G=63                 */
+#define M5_COLOR_CYAN       0x07FF   /* G=63, B=31                 */
+#define M5_COLOR_MAGENTA    0xF81F   /* R=31, B=31                 */
+#define M5_COLOR_ORANGE     0xFD20   /* R=31, G=41                 */
+#define M5_COLOR_PURPLE     0x8010   /* R=16, B=16                 */
+#define M5_COLOR_DARKGREY   0x39C6   /* ≈ #404040                  */
+#define M5_COLOR_GREY       0x7BEF   /* ≈ #808080                  */
 
-#define M5_TRUE_RED         0x001F
-#define M5_TRUE_GREEN       0x07E0
-#define M5_TRUE_BLUE        0xF800
-#define M5_TRUE_YELLOW      0x07FF
-#define M5_TRUE_ORANGE      0x067F
+#define M5_TRUE_RED         M5_COLOR_RED
+#define M5_TRUE_GREEN       M5_COLOR_GREEN
+#define M5_TRUE_BLUE        M5_COLOR_BLUE
+#define M5_TRUE_YELLOW      M5_COLOR_YELLOW
+#define M5_TRUE_ORANGE      M5_COLOR_ORANGE
 
 #endif /* M5ATOMS3_HAL_H */

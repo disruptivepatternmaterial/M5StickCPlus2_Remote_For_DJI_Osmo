@@ -20,6 +20,21 @@ Motion-triggered dashcam remote for DJI Osmo Action cameras via BLE.
 
 Sequence: wake (if needed) → set mode → shutter start → … → shutter stop → sleep.
 
+### Stop-record retry watchdog (added 2026-05-26)
+
+The DJI Osmo Action occasionally ignores a one-shot `stop_record` over BLE
+and keeps recording silently. To make stop reliable, every stop-record call
+site MUST also call `app_request_pending_stop()` (declared in
+[`main/app_main.h`](main/app_main.h)). The main loop in
+[`main/app_main.c`](main/app_main.c) then re-issues `command_logic_stop_record()`
+on a 1.5 s cadence until `is_camera_recording()` returns false, or until a
+retry budget of 5 attempts (≈ 7.5 s worst case) is exhausted. The budget
+exhaustion is logged at `ESP_LOGE` level (`FLOW: pending_stop GAVE UP …`).
+
+Asymmetric to start_record on purpose: a missed start gets re-fired by the
+next motion event in the dashcam flow, but a missed stop leaves the camera
+recording silently — the expensive failure mode worth defending against.
+
 ## Camera Mode
 
 - Protocol value: `0x01` (Video).

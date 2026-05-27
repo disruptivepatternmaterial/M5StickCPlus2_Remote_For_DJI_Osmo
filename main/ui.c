@@ -44,6 +44,7 @@
 #include "m5stickc_plus2_hal.h"
 #endif
 #include "command_logic.h"
+#include "app_main.h"   /* app_request_pending_stop() */
 #include "status_logic.h"
 #include "enums_logic.h"
 #include "connect_logic.h"
@@ -1432,34 +1433,39 @@ void ui_update_auto_status_line_only(void) {
 }
 
 #if defined(M5ATOMS3)
-/* ── AtomS3 minimal renderer (D-008..D-013) ────────────────────────────────────
+/* ── AtomS3 minimal renderer (M5GFX path, D-008..D-016) ────────────────────────
  *
- * Goals (per docs/ATOMS3_DECISIONS.md):
- *   - No icons / nav dots / instruction strip (D-008).
- *   - 3-tier type scale: HERO scale-3, VALUE scale-2, LABEL scale-1 (D-009).
- *   - All paint calls use M5_TRUE_* aliases (D-010).
- *   - One accent color per state (D-011).
- *   - No full-screen clear during steady-state updates — partial diff redraws
- *     only (D-012). Full clear only on a screen change.
- *   - Hard-clip every text draw so words never wrap or run past the edge (D-013).
+ * Decisions in scope:
+ *   D-008 — no icons / nav dots / instruction strip
+ *   D-009 — 3-tier type scale (LABEL / VALUE / HERO)
+ *   D-010 — colors: M5GFX standard RGB565 (M5_COLOR_* directly; the BGR
+ *           swap-aliases were retired together with the esp_lcd path)
+ *   D-011 — one accent color per state
+ *   D-012 — diff-based partial repaint (no full-screen flash mid-loop)
+ *   D-013 — text overflow handled by M5GFX's drawString (clips at fontHeight
+ *           boundary) — no need for hand-rolled clipping
+ *   D-014..D-016 — switch to M5GFX (proportional fonts, anti-aliasing)
  *
- * The renderer is called from both ui_update_display() (full path) and
- * ui_update_auto_status_line_only() (partial path) so the main-loop poll
- * cadence does not change.
- *
- * References: R11 (Pebble fonts), R12 (BRUTAL hierarchy), R13 (Qt embedded),
- *             R14 (mixed-size micro-typography).
+ * The renderer calls into m5atoms3_gfx.cpp (`atoms3_gfx_*`) instead of the
+ * legacy 8x8 bitmap path. Cross-target call sites elsewhere in this file
+ * still go through m5stickc_plus2_display_*, but on AtomS3 those forward
+ * to the same M5GFX shim.
  * ────────────────────────────────────────────────────────────────────────── */
 
-/* Margins / coordinates for the 128×128 layout. */
+#include "m5atoms3_gfx.h"
+
+/* Margins / coordinates for the 128×128 layout. Pixel Y coordinates are
+ * approximate landing points; M5GFX uses top-of-glyph as the y origin
+ * with top_left / top_center datums. The hero band is the visual focal
+ * point and gets the most vertical real estate. */
 #define ATOMS3_MARGIN_X         4
-#define ATOMS3_LABEL_Y          4                /* top tag (BT / AUTO)         */
-#define ATOMS3_HERO_Y           36               /* large state word            */
-#define ATOMS3_VALUE_Y          (ATOMS3_HERO_Y + 28) /* below hero (24 + 4 gap) */
-#define ATOMS3_HINT_Y           (M5_LCD_V_RES - 12)  /* bottom hint row         */
-#define ATOMS3_DOT_X            (M5_LCD_H_RES - 10)
-#define ATOMS3_DOT_Y            (ATOMS3_LABEL_Y + 1)
-#define ATOMS3_DOT_SIZE         6
+#define ATOMS3_LABEL_Y          2     /* tag (BT / AUTO) — small, top-left  */
+#define ATOMS3_HERO_Y           34    /* big state word — center stage      */
+#define ATOMS3_VALUE_Y          80    /* AUTO countdown number              */
+#define ATOMS3_HINT_Y           110   /* small hint — bottom row            */
+#define ATOMS3_DOT_X            (128 - 12)
+#define ATOMS3_DOT_Y            (ATOMS3_LABEL_Y + 2)
+#define ATOMS3_DOT_SIZE         8
 
 /* Cache of the last-rendered state so the steady-state path can early-out
  * when nothing has changed. */
@@ -1467,11 +1473,6 @@ typedef struct {
     bool                initialized;
     ui_screen_t         screen;
     connect_state_t     conn;
-    bool                rec;
-    bool                armed;
-    uint32_t            countdown;
-    bool                fix;
-    uint32_t            sats;
     char                hero[16];
     char                value[16];
     char                hint[24];
@@ -1480,53 +1481,31 @@ typedef struct {
 
 static atoms3_cache_t s_atoms3 = { .initialized = false };
 
-/* Truncate a string in-place so its rendered width fits `max_px` at the
- * given scale. Returns the (possibly shortened) string for chaining. */
-static const char *atoms3_clip_text(char *buf, int max_px, int scale) {
-    if (buf == NULL || max_px <= 0) return "";
-    int char_px = 8 * scale;
-    int max_chars = max_px / char_px;
-    if (max_chars < 1) max_chars = 1;
-    if ((int)strlen(buf) > max_chars) {
-        if (max_chars >= 1) {
-            buf[max_chars] = '\0';
-        }
-    }
-    return buf;
+/* Erase a horizontal band sized for the given M5GFX font tier. Used before
+ * each text rewrite so a previous longer string can't ghost. The +2 pad
+ * absorbs descenders / kerning artifacts. */
+static void atoms3_erase_band_for_tier(int y, int tier) {
+    int h = atoms3_gfx_tier_pixel_height(tier) + 2;
+    atoms3_gfx_erase_rect(0, y, atoms3_gfx_width(), h);
 }
 
-/* Draw a single text line, clearing its row first so a previous, longer
- * value can't leave ghost pixels. The row is `8 * scale + 1` rows tall. */
-static void atoms3_draw_line(int x, int y, const char *text, uint16_t color, int scale) {
-    int row_h = 8 * scale + 1;
-    m5stickc_plus2_display_fill_rect(0, y, M5_LCD_H_RES, row_h, M5_COLOR_BLACK);
-    m5stickc_plus2_display_print_scaled(x, y, text, color, scale);
-}
-
-/* Centered version: pre-measures, clips to the available width, then draws. */
-static void atoms3_draw_line_centered(int y, char *buf, uint16_t color, int scale) {
-    int avail = M5_LCD_H_RES - 2 * ATOMS3_MARGIN_X;
-    atoms3_clip_text(buf, avail, scale);
-    int w = ui_get_text_width(buf, scale);
-    int x = (M5_LCD_H_RES - w) / 2;
-    if (x < ATOMS3_MARGIN_X) x = ATOMS3_MARGIN_X;
-    atoms3_draw_line(x, y, buf, color, scale);
-}
-
-/* Top-right colored connection dot. Cleared first to avoid a stale color. */
+/* Top-right connection dot. M5GFX renders a clean filled circle. */
 static void atoms3_draw_conn_dot(connect_state_t conn) {
     uint16_t c;
     switch (conn) {
-        case PROTOCOL_CONNECTED: c = M5_TRUE_GREEN;     break;
-        case BLE_CONNECTED:      c = M5_TRUE_YELLOW;    break;
-        case BLE_SEARCHING:      c = M5_TRUE_YELLOW;    break;
+        case PROTOCOL_CONNECTED: c = M5_COLOR_GREEN;    break;
+        case BLE_CONNECTED:      c = M5_COLOR_YELLOW;   break;
+        case BLE_SEARCHING:      c = M5_COLOR_YELLOW;   break;
         default:                 c = M5_COLOR_DARKGREY; break;
     }
-    m5stickc_plus2_display_fill_rect(ATOMS3_DOT_X - 1, ATOMS3_DOT_Y - 1,
-                                     ATOMS3_DOT_SIZE + 2, ATOMS3_DOT_SIZE + 2,
-                                     M5_COLOR_BLACK);
-    m5stickc_plus2_display_fill_rect(ATOMS3_DOT_X, ATOMS3_DOT_Y,
-                                     ATOMS3_DOT_SIZE, ATOMS3_DOT_SIZE, c);
+    /* Erase a slightly larger square underneath so the previous color/size
+     * can't peek out around the new dot. */
+    atoms3_gfx_erase_rect(ATOMS3_DOT_X - 1, ATOMS3_DOT_Y - 1,
+                          ATOMS3_DOT_SIZE + 2, ATOMS3_DOT_SIZE + 2);
+    int r  = ATOMS3_DOT_SIZE / 2;
+    int cx = ATOMS3_DOT_X + r;
+    int cy = ATOMS3_DOT_Y + r;
+    atoms3_gfx_fill_circle(cx, cy, r, c);
 }
 
 /* Compose the BT-screen hero word + accent color for a given connect state. */
@@ -1535,15 +1514,15 @@ static void atoms3_compose_bt(char *out_hero, size_t hero_sz, uint16_t *out_colo
     switch (conn) {
         case PROTOCOL_CONNECTED:
             snprintf(out_hero, hero_sz, "ONLINE");
-            *out_color = M5_TRUE_GREEN;
+            *out_color = M5_COLOR_GREEN;
             break;
         case BLE_CONNECTED:
             snprintf(out_hero, hero_sz, "LINKING");
-            *out_color = M5_TRUE_YELLOW;
+            *out_color = M5_COLOR_YELLOW;
             break;
         case BLE_SEARCHING:
             snprintf(out_hero, hero_sz, "FINDING");
-            *out_color = M5_TRUE_YELLOW;
+            *out_color = M5_COLOR_YELLOW;
             break;
         case BLE_INIT_COMPLETE:
         default:
@@ -1567,10 +1546,10 @@ static void atoms3_compose_auto(char *out_hero, size_t hero_sz,
         snprintf(out_value, value_sz, "%lu:%02lu",
                  (unsigned long)(countdown / 60U),
                  (unsigned long)(countdown % 60U));
-        *out_color = M5_TRUE_YELLOW;
+        *out_color = M5_COLOR_YELLOW;
     } else if (recording) {
         snprintf(out_hero, hero_sz, "REC");
-        *out_color = M5_TRUE_GREEN;
+        *out_color = M5_COLOR_RED;
     } else {
         snprintf(out_hero, hero_sz, "WAIT");
         *out_color = M5_COLOR_GREY;
@@ -1597,43 +1576,33 @@ static void atoms3_compose_hint(char *out, size_t out_sz, ui_screen_t screen) {
 }
 
 static void atoms3_render(bool force_full) {
-    /* Toast still has the screen — leave it alone. The toast logic in
-     * ui_show_message() has already cleared and printed. */
+    /* Toast still has the screen — leave it alone. */
     if (ui_toast_active()) return;
 
     if (s_disp_mutex && xSemaphoreTake(s_disp_mutex, pdMS_TO_TICKS(150)) != pdTRUE) {
         return;
     }
 
-    /* On screen change (or first call ever), do a one-time full clear and
-     * redraw the static label tag + the dot. After that, every redraw is
-     * region-only — no full-screen flash. */
+    /* Screen change (or first call ever) → one-time full clear + tag rewrite,
+     * then every region cache slot is invalidated so the diff path repaints
+     * everything once. */
     bool screen_changed = !s_atoms3.initialized || s_atoms3.screen != g_ui_state.current_screen;
     bool full = force_full || screen_changed;
 
     if (full) {
-        m5stickc_plus2_display_fill_rect(0, 0, M5_LCD_H_RES, M5_LCD_V_RES, M5_COLOR_BLACK);
+        atoms3_gfx_clear(M5_COLOR_BLACK);
         const char *tag = (g_ui_state.current_screen == SCREEN_AUTO) ? "AUTO" : "BT";
-        m5stickc_plus2_display_print(ATOMS3_MARGIN_X, ATOMS3_LABEL_Y, tag, M5_COLOR_WHITE);
+        atoms3_gfx_print(ATOMS3_MARGIN_X, ATOMS3_LABEL_Y, tag, M5_COLOR_WHITE, 1);
         s_atoms3.initialized = true;
         s_atoms3.screen = g_ui_state.current_screen;
-        /* Force every region cache miss so the diff path repaints
-         * everything once after the clear. */
         s_atoms3.conn = (connect_state_t)-1;
-        s_atoms3.rec = !is_camera_recording();
-        s_atoms3.armed = !motion_logic_is_armed();
-        s_atoms3.countdown = 0xFFFFFFFFu;
-        s_atoms3.fix = !true;
-        s_atoms3.sats = 0xFFFFFFFFu;
-        s_atoms3.hero[0] = '\0';
+        s_atoms3.hero[0]  = '\0';
         s_atoms3.value[0] = '\0';
-        s_atoms3.hint[0] = '\0';
+        s_atoms3.hint[0]  = '\0';
         s_atoms3.hero_color = 0;
     }
 
     connect_state_t conn = connect_logic_get_state();
-
-    /* Connection dot — only repaint when state class changes. */
     if (conn != s_atoms3.conn) {
         atoms3_draw_conn_dot(conn);
         s_atoms3.conn = conn;
@@ -1646,44 +1615,40 @@ static void atoms3_render(bool force_full) {
     if (g_ui_state.current_screen == SCREEN_CONNECT) {
         atoms3_compose_bt(hero, sizeof(hero), &hero_color, conn);
     } else {
-        bool armed     = motion_logic_is_armed();
-        bool rec       = is_camera_recording();
+        bool     armed = motion_logic_is_armed();
+        bool     rec   = is_camera_recording();
         uint32_t cdown = motion_logic_get_stop_countdown_sec_remaining();
         atoms3_compose_auto(hero, sizeof(hero), value, sizeof(value),
                             &hero_color, armed, rec, cdown);
-        s_atoms3.armed     = armed;
-        s_atoms3.rec       = rec;
-        s_atoms3.countdown = cdown;
     }
 
-    /* HERO line (scale 3) — repaint only when text or color changed. */
+    /* HERO — repaint only when text or color changed. */
     if (full
         || strncmp(hero, s_atoms3.hero, sizeof(s_atoms3.hero)) != 0
         || hero_color != s_atoms3.hero_color) {
-        atoms3_draw_line_centered(ATOMS3_HERO_Y, hero, hero_color, 3);
+        atoms3_erase_band_for_tier(ATOMS3_HERO_Y, 3);
+        atoms3_gfx_print_centered(ATOMS3_HERO_Y, hero, hero_color, 3);
         strncpy(s_atoms3.hero, hero, sizeof(s_atoms3.hero) - 1);
         s_atoms3.hero[sizeof(s_atoms3.hero) - 1] = '\0';
         s_atoms3.hero_color = hero_color;
     }
 
-    /* VALUE line (scale 2) — only used by AUTO when there is a countdown. */
+    /* VALUE (countdown) — only AUTO uses it; clear the band when empty. */
     if (full || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0) {
+        atoms3_erase_band_for_tier(ATOMS3_VALUE_Y, 2);
         if (value[0] != '\0') {
-            atoms3_draw_line_centered(ATOMS3_VALUE_Y, value, M5_TRUE_YELLOW, 2);
-        } else {
-            /* Just clear the row so a previous countdown doesn't linger. */
-            m5stickc_plus2_display_fill_rect(0, ATOMS3_VALUE_Y, M5_LCD_H_RES, 17,
-                                             M5_COLOR_BLACK);
+            atoms3_gfx_print_centered(ATOMS3_VALUE_Y, value, M5_COLOR_YELLOW, 2);
         }
         strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
         s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
     }
 
-    /* HINT line (scale 1) — bottom row. */
+    /* HINT — bottom row, always on. */
     char hint[24];
     atoms3_compose_hint(hint, sizeof(hint), g_ui_state.current_screen);
     if (full || strncmp(hint, s_atoms3.hint, sizeof(s_atoms3.hint)) != 0) {
-        atoms3_draw_line_centered(ATOMS3_HINT_Y, hint, M5_COLOR_GREY, 1);
+        atoms3_erase_band_for_tier(ATOMS3_HINT_Y, 1);
+        atoms3_gfx_print_centered(ATOMS3_HINT_Y, hint, M5_COLOR_GREY, 1);
         strncpy(s_atoms3.hint, hint, sizeof(s_atoms3.hint) - 1);
         s_atoms3.hint[sizeof(s_atoms3.hint) - 1] = '\0';
     }
@@ -2146,6 +2111,10 @@ void ui_screen_shutter(void) {
             /* Stop current recording */
             ESP_LOGI(TAG, "Stopping recording in video mode");
             record_control_response_frame_t* response = command_logic_stop_record();
+            /* Same retry watchdog as the AUTO-screen manual stop. The camera
+             * sometimes ignores a single stop frame; the main loop will
+             * re-send until status confirms stopped. */
+            app_request_pending_stop();
             if (response) {
                 ui_show_message("Recording Stopped", M5_COLOR_YELLOW, 1000);
                 free(response);
@@ -2280,6 +2249,10 @@ void ui_screen_auto(void) {
          * "Audible Cues" — pause = single low beep (700 Hz / 50 ms). */
         m5stickc_plus2_buzzer_beep(700, 50);
         (void)command_logic_stop_record();
+        /* Camera sometimes ignores the first stop frame — arm the periodic
+         * retry watchdog in app_main so the main loop re-issues stop_record
+         * until status confirms the camera actually stopped. */
+        app_request_pending_stop();
         motion_logic_force_idle();
         /* Disarm so motion can't immediately re-trigger start_record while the
          * user is still holding the device (the IMU sees finger movement and
