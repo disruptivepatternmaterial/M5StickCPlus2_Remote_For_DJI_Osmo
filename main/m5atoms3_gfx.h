@@ -29,12 +29,18 @@ void atoms3_gfx_fill_rect(int x, int y, int w, int h, uint16_t color);
 void atoms3_gfx_fill_circle(int cx, int cy, int r, uint16_t color);
 void atoms3_gfx_draw_xbitmap(int x, int y, int w, int h,
                              const uint8_t *bitmap, uint16_t color);
+/* MSB-first 1-bpp bitmap (use for logo_bitmap.h). */
+void atoms3_gfx_draw_bitmap(int x, int y, int w, int h,
+                            const uint8_t *bitmap, uint16_t color);
+/* Color PNG (use for icons_png.h emoji icons). */
+void atoms3_gfx_draw_png(int x, int y, const uint8_t *data, unsigned len);
 
 /* Tier 1 = LABEL (small, proportional). Tier 2 = VALUE (medium). Tier 3 =
  * HERO (large). See docs/ATOMS3_MIGRATION_SPEC.md "Type scale" for the
  * design rationale. The shim picks the M5GFX font + size internally. */
 void atoms3_gfx_print(int x, int y, const char *text, uint16_t color, int tier);
 void atoms3_gfx_print_centered(int y, const char *text, uint16_t color, int tier);
+void atoms3_gfx_print_centered_at(int cx, int y, const char *text, uint16_t color, int tier);
 int  atoms3_gfx_tier_pixel_height(int tier);
 
 void atoms3_gfx_erase_rect(int x, int y, int w, int h);

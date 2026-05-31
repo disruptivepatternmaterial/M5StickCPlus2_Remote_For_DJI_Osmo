@@ -251,18 +251,16 @@ bool m5stickc_plus2_button_pwr_pressed(void) {
  * ──────────────────────────────────────────────────────────────────────── */
 
 static void display_boot_self_test(void) {
-    /* Center the source-resolution logo (231x87) on a 128x128 panel; the
-     * shim's drawXBitmap clips to the framebuffer. The logo is wider than
-     * the panel, so what shows is the central column — which is by design
-     * what the user wanted preserved as a recognizable boot graphic. */
-    int draw_x = (atoms3_gfx_width()  - LOGO_W) / 2;
-    int draw_y = 12;
+    /* Shared boot screen with the Ditch LEDs controller: bäärgsiitsch logo
+     * (zoomed 128x65, MSB-first → drawBitmap) centered up top, product name
+     * below. Same layout as the trigger4p boot for a matching pair. */
+    int draw_x = (atoms3_gfx_width() - LOGO_W) / 2;
+    if (draw_x < 0) draw_x = 0;
+    int draw_y = 6;
     atoms3_gfx_clear(M5_COLOR_BLACK);
-    atoms3_gfx_draw_xbitmap(draw_x, draw_y, LOGO_W, LOGO_H,
-                            logo_bitmap, M5_COLOR_WHITE);
-    /* Sub-label below the logo. */
-    int label_y = atoms3_gfx_height() - 18;
-    atoms3_gfx_print_centered(label_y, "DJI REMOTE", M5_COLOR_GREY, 1);
+    atoms3_gfx_draw_bitmap(draw_x, draw_y, LOGO_W, LOGO_H,
+                           logo_bitmap, M5_COLOR_WHITE);
+    atoms3_gfx_print_centered(draw_y + LOGO_H + 10, "Dash Cam", M5_COLOR_GREEN, 2);
     vTaskDelay(pdMS_TO_TICKS(1500));
     atoms3_gfx_clear(M5_COLOR_BLACK);
 }

@@ -13,6 +13,11 @@ CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
 
+# Partition layout: a custom single-app table (3 MB factory) is selected via
+# board_build.partitions = partitions_atoms3.csv in platformio.ini. The default
+# 1 MB singleapp layout left only ~3 KB free once the shared IBM Plex fonts +
+# color emoji icons were added; the 8 MB chip has ample room.
+
 # No PSRAM — ESP32-S3FN8 ships without it (R1).
 CONFIG_SPIRAM=n
 

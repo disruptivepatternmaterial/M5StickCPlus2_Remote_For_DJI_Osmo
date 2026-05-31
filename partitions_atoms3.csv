@@ -1,0 +1,8 @@
+# AtomS3 (ESP32-S3FN8, 8MB) single-app partition table.
+# Larger factory app than the IDF singleapp default (1MB) so the AtomS3 UI
+# (IBM Plex fonts + color emoji icons, shared with the trigger4p remote) fits
+# with room to grow. No OTA — this is a single-image device flashed over USB.
+# Name,     Type, SubType, Offset,   Size
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x300000,

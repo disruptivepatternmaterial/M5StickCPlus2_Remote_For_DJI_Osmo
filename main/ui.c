@@ -1453,19 +1453,39 @@ void ui_update_auto_status_line_only(void) {
  * ────────────────────────────────────────────────────────────────────────── */
 
 #include "m5atoms3_gfx.h"
+#include "icons_png.h"
+#include "status_logic.h"   /* is_camera_recording(), current_record_time */
 
-/* Margins / coordinates for the 128×128 layout. Pixel Y coordinates are
- * approximate landing points; M5GFX uses top-of-glyph as the y origin
- * with top_left / top_center datums. The hero band is the visual focal
- * point and gets the most vertical real estate. */
-#define ATOMS3_MARGIN_X         4
-#define ATOMS3_LABEL_Y          2     /* tag (BT / AUTO) — small, top-left  */
-#define ATOMS3_HERO_Y           34    /* big state word — center stage      */
-#define ATOMS3_VALUE_Y          80    /* AUTO countdown number              */
-#define ATOMS3_HINT_Y           110   /* small hint — bottom row            */
-#define ATOMS3_DOT_X            (128 - 12)
-#define ATOMS3_DOT_Y            (ATOMS3_LABEL_Y + 2)
-#define ATOMS3_DOT_SIZE         8
+/* Shared visual frame with the trigger4p "Ditch LEDs" remote:
+ *
+ *   +----------------------+
+ *   | DASH          [link] |  TOP BAND: title + 🔗 icon when PROTOCOL_CONNECTED
+ *   |                      |
+ *   |        ( o )         |  MAIN: emoji status — 📡 finding/linking (blink),
+ *   |        ICON          |        🤝 pairing (blink), 📸 recording (+ M:SS),
+ *   |                      |        📷 connected idle. AUTO screen keeps its
+ *   +----------------------+        motion hero word + countdown value.
+ *   |     HOLD = PAIR      |  BOTTOM BAND: button/push hint (GPS on AUTO).
+ *   +----------------------+
+ */
+#define A_SCREEN_W      128
+#define A_TOP_H         20
+#define A_BOT_H         24
+#define A_MAIN_TOP      (A_TOP_H + 1)
+#define A_MAIN_BOT      (128 - A_BOT_H - 1)
+#define A_MAIN_H        (A_MAIN_BOT - A_MAIN_TOP)
+#define A_ICON_W        48
+#define A_ICON_X        ((A_SCREEN_W - A_ICON_W) / 2)
+#define A_ICON_Y        (A_MAIN_TOP + (A_MAIN_H - A_ICON_W) / 2)
+#define A_REC_ICON_Y    (A_MAIN_TOP + 2)
+#define A_REC_TIME_Y    (A_REC_ICON_Y + A_ICON_W + 2)
+#define A_HERO_Y        (A_MAIN_TOP + 12)   /* AUTO text hero  */
+#define A_VALUE_Y       (A_MAIN_TOP + 46)   /* AUTO countdown  */
+#define A_LINK_W        16
+#define A_BAND_BG       M5_COLOR_DARKGREY
+#define A_BLINK_TICKS   8                   /* ~400 ms at 50 ms/loop */
+
+typedef enum { MI_NONE = 0, MI_SAT, MI_PAIR, MI_REC, MI_IDLE } main_icon_t;
 
 /* Cache of the last-rendered state so the steady-state path can early-out
  * when nothing has changed. */
@@ -1473,13 +1493,36 @@ typedef struct {
     bool                initialized;
     ui_screen_t         screen;
     connect_state_t     conn;
-    char                hero[16];
-    char                value[16];
+    main_icon_t         icon;        /* current CONNECT-screen emoji        */
+    bool                blink;       /* does the current icon blink         */
+    bool                blink_visible;
+    char                hero[16];    /* AUTO text hero                      */
+    char                value[16];   /* REC M:SS or AUTO countdown          */
     char                hint[24];
     uint16_t            hero_color;
 } atoms3_cache_t;
 
 static atoms3_cache_t s_atoms3 = { .initialized = false };
+
+static const uint8_t *atoms3_main_icon_png(main_icon_t i, unsigned *len) {
+    switch (i) {
+        case MI_SAT:  *len = icon_sat_png_len;  return icon_sat_png;
+        case MI_PAIR: *len = icon_pair_png_len; return icon_pair_png;
+        case MI_REC:  *len = icon_rec_png_len;  return icon_rec_png;
+        case MI_IDLE: *len = icon_idle_png_len; return icon_idle_png;
+        default:      *len = 0; return NULL;
+    }
+}
+
+static void atoms3_draw_icon(main_icon_t i, int y) {
+    unsigned len = 0;
+    const uint8_t *png = atoms3_main_icon_png(i, &len);
+    if (png) atoms3_gfx_draw_png(A_ICON_X, y, png, len);
+}
+
+static void atoms3_clear_main(void) {
+    atoms3_gfx_fill_rect(0, A_MAIN_TOP, A_SCREEN_W, A_MAIN_H + 1, M5_COLOR_BLACK);
+}
 
 /* Erase a horizontal band sized for the given M5GFX font tier. Used before
  * each text rewrite so a previous longer string can't ghost. The +2 pad
@@ -1489,46 +1532,45 @@ static void atoms3_erase_band_for_tier(int y, int tier) {
     atoms3_gfx_erase_rect(0, y, atoms3_gfx_width(), h);
 }
 
-/* Top-right connection dot. M5GFX renders a clean filled circle. */
-static void atoms3_draw_conn_dot(connect_state_t conn) {
-    uint16_t c;
-    switch (conn) {
-        case PROTOCOL_CONNECTED: c = M5_COLOR_GREEN;    break;
-        case BLE_CONNECTED:      c = M5_COLOR_YELLOW;   break;
-        case BLE_SEARCHING:      c = M5_COLOR_YELLOW;   break;
-        default:                 c = M5_COLOR_DARKGREY; break;
+/* Top-right connectivity indicator: 🔗 when fully connected to the camera,
+ * otherwise clear (the main area carries the dish/handshake status). */
+static void atoms3_draw_top_indicator(connect_state_t conn) {
+    atoms3_gfx_fill_rect(A_SCREEN_W - 20, 0, 20, A_TOP_H, A_BAND_BG);
+    if (conn == PROTOCOL_CONNECTED) {
+        atoms3_gfx_draw_png(A_SCREEN_W - A_LINK_W - 2, (A_TOP_H - A_LINK_W) / 2,
+                            icon_link_png, icon_link_png_len);
     }
-    /* Erase a slightly larger square underneath so the previous color/size
-     * can't peek out around the new dot. */
-    atoms3_gfx_erase_rect(ATOMS3_DOT_X - 1, ATOMS3_DOT_Y - 1,
-                          ATOMS3_DOT_SIZE + 2, ATOMS3_DOT_SIZE + 2);
-    int r  = ATOMS3_DOT_SIZE / 2;
-    int cx = ATOMS3_DOT_X + r;
-    int cy = ATOMS3_DOT_Y + r;
-    atoms3_gfx_fill_circle(cx, cy, r, c);
 }
 
-/* Compose the BT-screen hero word + accent color for a given connect state. */
-static void atoms3_compose_bt(char *out_hero, size_t hero_sz, uint16_t *out_color,
-                              connect_state_t conn) {
+static void atoms3_draw_top_band(connect_state_t conn) {
+    atoms3_gfx_fill_rect(0, 0, A_SCREEN_W, A_TOP_H, A_BAND_BG);
+    atoms3_gfx_print(4, 2, "DASH", M5_COLOR_WHITE, 1);
+    atoms3_draw_top_indicator(conn);
+}
+
+/* Pick the CONNECT-screen emoji for the current link/camera state. Sets
+ * *blink for the states that should flash, and fills value with the recording
+ * elapsed time (M:SS) when recording. */
+static main_icon_t atoms3_connect_icon(connect_state_t conn, bool *blink,
+                                       char *value, size_t value_sz) {
+    value[0] = '\0';
+    *blink = false;
     switch (conn) {
         case PROTOCOL_CONNECTED:
-            snprintf(out_hero, hero_sz, "ONLINE");
-            *out_color = M5_COLOR_GREEN;
-            break;
+            if (is_camera_recording()) {
+                unsigned t = (unsigned)current_record_time;
+                snprintf(value, value_sz, "%u:%02u", t / 60U, t % 60U);
+                return MI_REC;
+            }
+            return MI_IDLE;
         case BLE_CONNECTED:
-            snprintf(out_hero, hero_sz, "LINKING");
-            *out_color = M5_COLOR_YELLOW;
-            break;
+            *blink = true;
+            return (g_verify_mode == 1) ? MI_PAIR : MI_SAT;
         case BLE_SEARCHING:
-            snprintf(out_hero, hero_sz, "FINDING");
-            *out_color = M5_COLOR_YELLOW;
-            break;
-        case BLE_INIT_COMPLETE:
+            *blink = true;
+            return MI_SAT;
         default:
-            snprintf(out_hero, hero_sz, "OFFLINE");
-            *out_color = M5_COLOR_DARKGREY;
-            break;
+            return MI_SAT;   /* offline / init: dish, static */
     }
 }
 
@@ -1583,72 +1625,109 @@ static void atoms3_render(bool force_full) {
         return;
     }
 
-    /* Screen change (or first call ever) → one-time full clear + tag rewrite,
-     * then every region cache slot is invalidated so the diff path repaints
-     * everything once. */
-    bool screen_changed = !s_atoms3.initialized || s_atoms3.screen != g_ui_state.current_screen;
+    static uint32_t tick = 0;
+    tick++;
+    bool blink_visible = ((tick / A_BLINK_TICKS) & 1u) == 0u;
+
+    bool screen_changed = !s_atoms3.initialized
+                       || s_atoms3.screen != g_ui_state.current_screen;
     bool full = force_full || screen_changed;
+
+    connect_state_t conn = connect_logic_get_state();
 
     if (full) {
         atoms3_gfx_clear(M5_COLOR_BLACK);
-        const char *tag = (g_ui_state.current_screen == SCREEN_AUTO) ? "AUTO" : "BT";
-        atoms3_gfx_print(ATOMS3_MARGIN_X, ATOMS3_LABEL_Y, tag, M5_COLOR_WHITE, 1);
-        s_atoms3.initialized = true;
-        s_atoms3.screen = g_ui_state.current_screen;
-        s_atoms3.conn = (connect_state_t)-1;
-        s_atoms3.hero[0]  = '\0';
-        s_atoms3.value[0] = '\0';
-        s_atoms3.hint[0]  = '\0';
-        s_atoms3.hero_color = 0;
-    }
-
-    connect_state_t conn = connect_logic_get_state();
-    if (conn != s_atoms3.conn) {
-        atoms3_draw_conn_dot(conn);
+        atoms3_draw_top_band(conn);
+        atoms3_clear_main();
+        atoms3_gfx_fill_rect(0, A_MAIN_BOT + 1, A_SCREEN_W, A_BOT_H, A_BAND_BG);
+        s_atoms3.initialized  = true;
+        s_atoms3.screen       = g_ui_state.current_screen;
+        s_atoms3.conn         = conn;
+        s_atoms3.icon         = MI_NONE;
+        s_atoms3.blink        = false;
+        s_atoms3.blink_visible= blink_visible;
+        s_atoms3.hero[0]      = '\0';
+        s_atoms3.value[0]     = '\0';
+        s_atoms3.hint[0]      = '\0';
+        s_atoms3.hero_color   = 0;
+    } else if (conn != s_atoms3.conn) {
+        atoms3_draw_top_indicator(conn);
         s_atoms3.conn = conn;
     }
 
-    char     hero[16]  = "";
-    char     value[16] = "";
-    uint16_t hero_color = M5_COLOR_WHITE;
-
     if (g_ui_state.current_screen == SCREEN_CONNECT) {
-        atoms3_compose_bt(hero, sizeof(hero), &hero_color, conn);
+        /* ── Emoji status ────────────────────────────────────────────────── */
+        char        value[16];
+        bool        blink = false;
+        main_icon_t want  = atoms3_connect_icon(conn, &blink, value, sizeof(value));
+        bool        icon_changed = (s_atoms3.icon != want);
+
+        if (full || icon_changed) {
+            atoms3_clear_main();
+            s_atoms3.icon  = want;
+            s_atoms3.blink = blink;
+            s_atoms3.value[0] = '\0';
+            int iy = (want == MI_REC) ? A_REC_ICON_Y : A_ICON_Y;
+            if (!blink || blink_visible) atoms3_draw_icon(want, iy);
+            s_atoms3.blink_visible = blink_visible;
+        } else if (blink && blink_visible != s_atoms3.blink_visible) {
+            if (blink_visible) atoms3_draw_icon(want, A_ICON_Y);
+            else atoms3_gfx_fill_rect(A_ICON_X, A_ICON_Y, A_ICON_W, A_ICON_W, M5_COLOR_BLACK);
+            s_atoms3.blink_visible = blink_visible;
+        }
+
+        /* Recording elapsed time under the camera icon. */
+        if (want == MI_REC
+            && (full || icon_changed
+                || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0)) {
+            atoms3_erase_band_for_tier(A_REC_TIME_Y, 2);
+            if (value[0] != '\0')
+                atoms3_gfx_print_centered(A_REC_TIME_Y, value, M5_COLOR_WHITE, 2);
+            strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
+            s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
+        }
     } else {
+        /* ── AUTO screen: motion hero word + countdown (text) ─────────────── */
+        if (!full && s_atoms3.icon != MI_NONE) {
+            atoms3_clear_main();
+            s_atoms3.icon = MI_NONE;
+            s_atoms3.hero[0] = '\0';
+            s_atoms3.value[0] = '\0';
+        }
+        char     hero[16]  = "";
+        char     value[16] = "";
+        uint16_t hero_color = M5_COLOR_WHITE;
         bool     armed = motion_logic_is_armed();
         bool     rec   = is_camera_recording();
         uint32_t cdown = motion_logic_get_stop_countdown_sec_remaining();
         atoms3_compose_auto(hero, sizeof(hero), value, sizeof(value),
                             &hero_color, armed, rec, cdown);
-    }
 
-    /* HERO — repaint only when text or color changed. */
-    if (full
-        || strncmp(hero, s_atoms3.hero, sizeof(s_atoms3.hero)) != 0
-        || hero_color != s_atoms3.hero_color) {
-        atoms3_erase_band_for_tier(ATOMS3_HERO_Y, 3);
-        atoms3_gfx_print_centered(ATOMS3_HERO_Y, hero, hero_color, 3);
-        strncpy(s_atoms3.hero, hero, sizeof(s_atoms3.hero) - 1);
-        s_atoms3.hero[sizeof(s_atoms3.hero) - 1] = '\0';
-        s_atoms3.hero_color = hero_color;
-    }
-
-    /* VALUE (countdown) — only AUTO uses it; clear the band when empty. */
-    if (full || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0) {
-        atoms3_erase_band_for_tier(ATOMS3_VALUE_Y, 2);
-        if (value[0] != '\0') {
-            atoms3_gfx_print_centered(ATOMS3_VALUE_Y, value, M5_COLOR_YELLOW, 2);
+        if (full || strncmp(hero, s_atoms3.hero, sizeof(s_atoms3.hero)) != 0
+            || hero_color != s_atoms3.hero_color) {
+            atoms3_erase_band_for_tier(A_HERO_Y, 3);
+            atoms3_gfx_print_centered(A_HERO_Y, hero, hero_color, 3);
+            strncpy(s_atoms3.hero, hero, sizeof(s_atoms3.hero) - 1);
+            s_atoms3.hero[sizeof(s_atoms3.hero) - 1] = '\0';
+            s_atoms3.hero_color = hero_color;
         }
-        strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
-        s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
+        if (full || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0) {
+            atoms3_erase_band_for_tier(A_VALUE_Y, 2);
+            if (value[0] != '\0')
+                atoms3_gfx_print_centered(A_VALUE_Y, value, M5_COLOR_YELLOW, 2);
+            strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
+            s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
+        }
     }
 
-    /* HINT — bottom row, always on. */
+    /* ── Bottom hint band ─────────────────────────────────────────────────── */
     char hint[24];
     atoms3_compose_hint(hint, sizeof(hint), g_ui_state.current_screen);
     if (full || strncmp(hint, s_atoms3.hint, sizeof(s_atoms3.hint)) != 0) {
-        atoms3_erase_band_for_tier(ATOMS3_HINT_Y, 1);
-        atoms3_gfx_print_centered(ATOMS3_HINT_Y, hint, M5_COLOR_GREY, 1);
+        int h1 = atoms3_gfx_tier_pixel_height(1);
+        atoms3_gfx_fill_rect(0, A_MAIN_BOT + 1, A_SCREEN_W, A_BOT_H, A_BAND_BG);
+        atoms3_gfx_print_centered((A_MAIN_BOT + 1) + (A_BOT_H - h1) / 2,
+                                  hint, M5_COLOR_WHITE, 1);
         strncpy(s_atoms3.hint, hint, sizeof(s_atoms3.hint) - 1);
         s_atoms3.hint[sizeof(s_atoms3.hint) - 1] = '\0';
     }

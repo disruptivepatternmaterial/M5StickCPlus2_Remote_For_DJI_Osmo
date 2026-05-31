@@ -35,6 +35,7 @@
 #include <string.h>
 
 #include "esp_log.h"
+#include "fonts/ibmplex_fonts.h"
 
 extern "C" {
 #include "m5atoms3_hal.h"
@@ -105,6 +106,20 @@ extern "C" void atoms3_gfx_draw_xbitmap(int x, int y, int w, int h,
     gfx.drawXBitmap(x, y, bitmap, w, h, color);
 }
 
+/* MSB-first 1-bpp bitmap (logo_bitmap.h is generated MSB-first). drawXBitmap
+ * is LSB-first and would scramble it, so the logo must use drawBitmap. */
+extern "C" void atoms3_gfx_draw_bitmap(int x, int y, int w, int h,
+                                       const uint8_t *bitmap, uint16_t color) {
+    if (bitmap == nullptr) return;
+    gfx.drawBitmap(x, y, bitmap, w, h, color);
+}
+
+/* Color PNG (icons_png.h), decoded at draw time. Shares the trigger4p icon
+ * language: a satellite dish, handshake, camera, link, etc. */
+extern "C" void atoms3_gfx_draw_png(int x, int y, const uint8_t *data, unsigned len) {
+    if (data && len) gfx.drawPng(data, (uint32_t)len, x, y);
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Text
  *
@@ -125,32 +140,22 @@ extern "C" void atoms3_gfx_draw_xbitmap(int x, int y, int w, int h,
  * rolled 8x8 font path is no longer used on AtomS3.
  */
 static void atoms3_gfx_pick_font_for_tier(int tier) {
+    gfx.setTextSize(1);
     switch (tier) {
-        case 3:
-            /* HERO — large proportional. Font4 is the largest baseline font
-             * M5GFX always ships and is already proportional. */
-            gfx.setFont(&fonts::Font4);
-            gfx.setTextSize(1);
-            break;
-        case 2:
-            /* VALUE — mid. Font2 with size 2 gives chunky readable digits. */
-            gfx.setFont(&fonts::Font2);
-            gfx.setTextSize(2);
-            break;
+        case 3:  gfx.setFont(&IBMPlexSans_SemiBold28pt7b); break;  /* HERO  */
+        case 2:  gfx.setFont(&IBMPlexSans_SemiBold18pt7b); break;  /* VALUE */
         case 1:
-        default:
-            /* LABEL — small. Font2 size 1. */
-            gfx.setFont(&fonts::Font2);
-            gfx.setTextSize(1);
-            break;
+        default: gfx.setFont(&IBMPlexSans_Medium9pt7b);    break;  /* LABEL */
     }
 }
 
+/* Transparent background: callers repaint the region first, so GFX-font glyphs
+ * must not stamp an opaque box (matches the trigger4p shim). */
 extern "C" void atoms3_gfx_print(int x, int y, const char *text,
                                  uint16_t color, int tier) {
     if (text == nullptr) return;
     atoms3_gfx_pick_font_for_tier(tier);
-    gfx.setTextColor(color, TFT_BLACK);
+    gfx.setTextColor(color);
     gfx.setTextDatum(top_left);
     gfx.drawString(text, x, y);
 }
@@ -159,9 +164,19 @@ extern "C" void atoms3_gfx_print_centered(int y, const char *text,
                                           uint16_t color, int tier) {
     if (text == nullptr) return;
     atoms3_gfx_pick_font_for_tier(tier);
-    gfx.setTextColor(color, TFT_BLACK);
+    gfx.setTextColor(color);
     gfx.setTextDatum(top_center);
     gfx.drawString(text, gfx.width() / 2, y);
+}
+
+/* Horizontally centered on an arbitrary x. */
+extern "C" void atoms3_gfx_print_centered_at(int cx, int y, const char *text,
+                                             uint16_t color, int tier) {
+    if (text == nullptr) return;
+    atoms3_gfx_pick_font_for_tier(tier);
+    gfx.setTextColor(color);
+    gfx.setTextDatum(top_center);
+    gfx.drawString(text, cx, y);
 }
 
 /* Erase a rectangular region (helper for partial-update paths so a previous

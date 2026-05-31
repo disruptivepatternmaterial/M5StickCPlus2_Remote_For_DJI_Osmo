@@ -7,6 +7,10 @@
 .DS_Store
 .cursor/live_log.txt
 .cursor/debug-*.log
+# Local serial-monitor / crash scratch dumps (contain device runtime data such
+# as the board's Bluetooth MAC). Keep .cursor/rules/ which is intentional.
+.cursor/*.txt
+.cursor/*.log
 
 # =============================================================================
 # Project-specific (this repo)

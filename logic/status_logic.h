@@ -9,6 +9,7 @@ extern uint8_t current_camera_status;
 extern uint8_t current_video_resolution;
 extern uint8_t current_fps_idx;
 extern uint8_t current_eis_mode;
+extern uint16_t current_record_time;   /* recording elapsed seconds (camera push) */
 extern bool camera_status_initialized;
 
 bool is_camera_recording();
