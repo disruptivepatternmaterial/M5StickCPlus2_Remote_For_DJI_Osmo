@@ -260,7 +260,7 @@ static void display_boot_self_test(void) {
     atoms3_gfx_clear(M5_COLOR_BLACK);
     atoms3_gfx_draw_bitmap(draw_x, draw_y, LOGO_W, LOGO_H,
                            logo_bitmap, M5_COLOR_WHITE);
-    atoms3_gfx_print_centered(draw_y + LOGO_H + 10, "Dash Cam", M5_COLOR_GREEN, 2);
+    atoms3_gfx_print_centered(draw_y + LOGO_H + 10, "Dash Cam", M5_COLOR_GREEN, 1);
     vTaskDelay(pdMS_TO_TICKS(1500));
     atoms3_gfx_clear(M5_COLOR_BLACK);
 }

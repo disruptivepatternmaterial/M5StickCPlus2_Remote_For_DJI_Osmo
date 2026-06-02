@@ -1687,34 +1687,35 @@ static void atoms3_render(bool force_full) {
             s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
         }
     } else {
-        /* ── AUTO screen: motion hero word + countdown (text) ─────────────── */
-        if (!full && s_atoms3.icon != MI_NONE) {
+        /* AUTO is still the camera-status screen on AtomS3. Keep the shared
+         * visual language: camera emoji in the main area, elapsed record time
+         * only when recording. No giant WAIT/REC/STOP words. */
+        char        value[16];
+        bool        blink = false;
+        main_icon_t want  = atoms3_connect_icon(conn, &blink, value, sizeof(value));
+        bool        icon_changed = (s_atoms3.icon != want);
+        int         iy = (want == MI_REC) ? A_REC_ICON_Y : A_ICON_Y;
+
+        if (full || icon_changed) {
             atoms3_clear_main();
-            s_atoms3.icon = MI_NONE;
+            s_atoms3.icon = want;
+            s_atoms3.blink = blink;
             s_atoms3.hero[0] = '\0';
             s_atoms3.value[0] = '\0';
+            if (!blink || blink_visible) atoms3_draw_icon(want, iy);
+            s_atoms3.blink_visible = blink_visible;
+        } else if (blink && blink_visible != s_atoms3.blink_visible) {
+            if (blink_visible) atoms3_draw_icon(want, iy);
+            else atoms3_gfx_fill_rect(A_ICON_X, iy, A_ICON_W, A_ICON_W, M5_COLOR_BLACK);
+            s_atoms3.blink_visible = blink_visible;
         }
-        char     hero[16]  = "";
-        char     value[16] = "";
-        uint16_t hero_color = M5_COLOR_WHITE;
-        bool     armed = motion_logic_is_armed();
-        bool     rec   = is_camera_recording();
-        uint32_t cdown = motion_logic_get_stop_countdown_sec_remaining();
-        atoms3_compose_auto(hero, sizeof(hero), value, sizeof(value),
-                            &hero_color, armed, rec, cdown);
 
-        if (full || strncmp(hero, s_atoms3.hero, sizeof(s_atoms3.hero)) != 0
-            || hero_color != s_atoms3.hero_color) {
-            atoms3_erase_band_for_tier(A_HERO_Y, 3);
-            atoms3_gfx_print_centered(A_HERO_Y, hero, hero_color, 3);
-            strncpy(s_atoms3.hero, hero, sizeof(s_atoms3.hero) - 1);
-            s_atoms3.hero[sizeof(s_atoms3.hero) - 1] = '\0';
-            s_atoms3.hero_color = hero_color;
-        }
-        if (full || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0) {
-            atoms3_erase_band_for_tier(A_VALUE_Y, 2);
+        if (want == MI_REC
+            && (full || icon_changed
+                || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0)) {
+            atoms3_erase_band_for_tier(A_REC_TIME_Y, 2);
             if (value[0] != '\0')
-                atoms3_gfx_print_centered(A_VALUE_Y, value, M5_COLOR_YELLOW, 2);
+                atoms3_gfx_print_centered(A_REC_TIME_Y, value, M5_COLOR_WHITE, 2);
             strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
             s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
         }
@@ -1939,6 +1940,17 @@ void ui_execute_current_screen(void) {
 void ui_show_message(const char* message, uint16_t color, int duration_ms) {
     if (message == NULL) return;
     if (duration_ms < 1) duration_ms = 1;
+
+#if defined(M5ATOMS3)
+    /* AtomS3 uses the same persistent chrome as the trigger4p remote. Full-screen
+     * progress/error toasts ("Reconnecting...", red failures, etc.) look like
+     * random flashes on the 128x128 panel and break the shared UI pattern.
+     * Keep the workflow logs and let atoms3_render() show state with icons. */
+    (void)color;
+    (void)duration_ms;
+    g_ui_state.display_needs_update = true;
+    return;
+#endif
 
     if (s_disp_mutex) xSemaphoreTake(s_disp_mutex, pdMS_TO_TICKS(300));
     m5stickc_plus2_display_clear(M5_COLOR_BLACK);

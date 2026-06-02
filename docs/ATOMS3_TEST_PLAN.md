@@ -46,7 +46,7 @@ power-on within 1 m.
 1. From T-002's running device, short-press (< 600 ms) the screen button.
 
 **Pass criteria**
-- Screen cycles `BT → AUTO → BT` on each short press.
+- Screen cycles `CONNECT → AUTO → CONNECT` on each short press.
 - Each transition completes in < 250 ms.
 - No stuck/blank frames.
 
@@ -59,7 +59,8 @@ power-on within 1 m.
 
 **Pass criteria**
 - Camera transitions to recording within ~2 s of motion onset.
-- AUTO screen shows `REC` and a counting timer.
+- AUTO screen keeps the camera emoji layout. It shows `📸` and elapsed `M:SS`
+  only while the camera reports recording.
 - Recording stops once motion stops + countdown elapses.
 
 ### T-005 — Manual override: long-press while AUTO

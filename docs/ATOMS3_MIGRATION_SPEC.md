@@ -74,35 +74,39 @@ clear during steady state), D-013 (hard-clipped text, no wrap).
 
 | Tier  | Pixels | Use                                                |
 |-------|--------|----------------------------------------------------|
-| HERO  | 24 px  | Single state word per screen (`OFFLINE`, `REC`, …) |
-| VALUE | 16 px  | Numeric companion (countdown, sat count)           |
-| LABEL | 8 px   | Top tag (`BT`, `AUTO`) + bottom hint               |
+| HERO  | 24 px  | Reserved for rare short alerts only                |
+| VALUE | 16 px  | Recording elapsed time under the camera emoji      |
+| LABEL | 8 px   | Top tag (`DASH`) + bottom hint + boot label        |
 
 ### Color rules
 
 - Background: black.
 - Primary text: white.
-- One accent color per state, sourced from `M5_TRUE_*` aliases:
-  - REC / ONLINE → green
-  - CONNECTING / WAIT → yellow
-  - OFF / OFFLINE → dim grey
+- Persistent chrome uses the same visual language as the trigger4p remote:
+  - top band: `DASH` label + link icon only when protocol-connected
+  - main area: emoji state icon (`📡`, `🤝`, `📸`, `📷`)
+  - bottom band: button/GPS hint
+- AtomS3 does not use full-screen progress/error toasts. Connection attempts,
+  reconnect failures, and pairing progress remain in logs; the screen stays in
+  the persistent chrome and changes state through icons.
 
 ### Layout
 
 ```
-BT screen                          AUTO screen
+CONNECT screen                     AUTO screen
 +----------------+                +----------------+
-|BT          [.] |  label + dot   |AUTO        [.] |  label + connection dot
+|DASH        [🔗]|  top band      |DASH        [🔗]|  top band
 |                |                |                |
-|   ONLINE       |  hero (scale3) |    REC         |  hero (scale3)
-|                |                |    00:23       |  value (scale2)
-|                |                |                |
+|      📡        |  finding       |      📷        |  idle camera
+|      🤝        |  pairing       |      📸        |  recording
+|      📷        |  idle          |    00:23       |  elapsed time
 |                |                |                |
 |HOLD = PAIR     |  hint          |GPS OK 11       |  hint
 +----------------+                +----------------+
 ```
 
-Boot splash (the existing logo, clipped) renders briefly before the first `BT` paint.
+Boot splash renders the shared zoomed logo plus `Dash Cam` in the small label
+tier so the text fits the 128 px panel.
 
 ## GPS
 
