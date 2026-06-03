@@ -410,9 +410,14 @@ void app_main(void) {
              *   dashcam this would brick auto-restart on the next bump. So we
              *   accept the small extra battery cost and keep the camera awake.
              *   See SPEC.md "Auto recording" section. */
-            if (motion_logic_is_armed() && motion_logic_just_stopped()
-                    && (s_is_recording || is_camera_recording())) {
-                ESP_LOGI("FLOW", "motion_stopped → stop_record (camera stays awake)");
+            bool armed = motion_logic_is_armed();
+            bool recording = (s_is_recording || is_camera_recording());
+            bool quiet_timeout = !motion_logic_is_moving()
+                    && motion_logic_get_stop_countdown_sec_remaining() == 0U;
+            if (armed && recording && !s_pending_stop
+                    && (motion_logic_just_stopped() || quiet_timeout)) {
+                ESP_LOGI("FLOW", "%s → stop_record (camera stays awake)",
+                         motion_logic_just_stopped() ? "motion_stopped" : "quiet_timeout");
                 (void)command_logic_stop_record();
                 s_is_recording = false;
                 /* Arm the periodic-retry watchdog: if the camera ignores

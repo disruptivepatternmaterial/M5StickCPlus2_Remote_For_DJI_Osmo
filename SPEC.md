@@ -40,6 +40,12 @@ fabricate motion or start recording merely because reconnect succeeded. If IMU
 motion caused the reconnect, the pending motion request starts recording once
 protocol is connected; if the remote is still, it stays idle.
 
+If the camera is already recording when the remote reconnects while still, and
+the quiet countdown is already zero, the main loop sends `stop_record` and arms
+the pending-stop retry watchdog. This covers the no-edge case where there is no
+new `motion_just_stopped()` transition because the IMU was already still at
+boot/reconnect time.
+
 ## Camera Mode
 
 - Protocol value: `0x01` (Video).
