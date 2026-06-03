@@ -235,19 +235,12 @@ void app_main(void) {
     while (1) {
         if (g_pending_set_video_mode_after_connect && connect_logic_get_state() == PROTOCOL_CONNECTED) {
             g_pending_set_video_mode_after_connect = false;
-            ESP_LOGI("FLOW", "set_mode_after_connect → Video (0x01) + auto record");
-            motion_logic_force_active();
+            ESP_LOGI("FLOW", "set_mode_after_connect → Video (0x01)");
             motion_logic_set_armed(true);
             if (command_logic_switch_camera_mode(CAMERA_MODE_NORMAL) != NULL) {
                 ESP_LOGI("FLOW", "set_mode_after_connect OK");
             } else {
                 ESP_LOGW("FLOW", "set_mode_after_connect FAIL");
-            }
-            vTaskDelay(pdMS_TO_TICKS(200));
-            if (!is_camera_recording()) {
-                ESP_LOGI("FLOW", "set_mode_after_connect → start_record");
-                (void)command_logic_start_record();
-                s_is_recording = true;
             }
         }
 
@@ -566,11 +559,10 @@ void app_main(void) {
         /* Redraw whenever connection state changes so the status square updates.
          *
          * On the rising edge into PROTOCOL_CONNECTED (initial connect or reconnect)
-         * also kick off the dashcam flow automatically: jump to the AUTO screen,
-         * arm motion detection, switch the camera to Video mode, and start
-         * recording. The user shouldn't have to remember to press Start every
-         * time — the whole point of AUTO is hands-off capture. The 2.5-min
-         * motion-quiet timeout still owns when recording stops.
+         * jump to the AUTO screen and arm motion detection. Do not fabricate
+         * motion or start recording merely because reconnect succeeded; real IMU
+         * motion owns start/stop. If motion caused the reconnect, s_want_record
+         * below will start recording once protocol is connected.
          *
          * Audible cues (see SPEC.md "Audible Cues"):
          *   connect           → single high beep (2500 Hz / 60 ms)
@@ -588,26 +580,11 @@ void app_main(void) {
                 g_ui_state.display_needs_update = true;
 
                 if (just_connected) {
-                    ESP_LOGI("FLOW", "PROTOCOL_CONNECTED → auto-jump to AUTO + start recording");
+                    ESP_LOGI("FLOW", "PROTOCOL_CONNECTED → auto-jump to AUTO");
                     m5stickc_plus2_buzzer_beep(2500, 60);
                     g_ui_state.current_screen = SCREEN_AUTO;
-
-                    /* Treat the moment of connect as "moving" so the stop countdown
-                     * doesn't fire immediately on a still device — it'll only count
-                     * down once the IMU has been quiet for the full timeout. */
-                    motion_logic_force_active();
                     motion_logic_set_armed(true);
-
-                    if (!is_camera_recording()) {
-                        (void)command_logic_switch_camera_mode(CAMERA_MODE_NORMAL);
-                        vTaskDelay(pdMS_TO_TICKS(200));
-                        ESP_LOGI("FLOW", "auto_on_connect → start_record");
-                        (void)command_logic_start_record();
-                        s_is_recording = true;
-                    } else {
-                        ESP_LOGI("FLOW", "auto_on_connect: camera already recording, skipping start");
-                        s_is_recording = true;
-                    }
+                    s_is_recording = is_camera_recording();
                 } else if (just_disconnected) {
                     ESP_LOGI("FLOW", "PROTOCOL_CONNECTED → cleared (clean disconnect)");
                     m5stickc_plus2_buzzer_beep(700, 80);

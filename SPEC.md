@@ -35,10 +35,10 @@ Asymmetric to start_record on purpose: a missed start gets re-fired by the
 next motion event in the dashcam flow, but a missed stop leaves the camera
 recording silently — the expensive failure mode worth defending against.
 
-The AUTO reconnect path also arms motion and sends `start_record` after setting
-Video mode. This avoids depending on a connection-edge race in the main loop:
-after a successful reconnect, motion start/stop behavior is active even if the
-connection state changed inside the UI worker.
+The AUTO reconnect path arms motion and sets Video mode, but it must not
+fabricate motion or start recording merely because reconnect succeeded. If IMU
+motion caused the reconnect, the pending motion request starts recording once
+protocol is connected; if the remote is still, it stays idle.
 
 ## Camera Mode
 
