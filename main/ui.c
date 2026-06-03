@@ -1611,20 +1611,15 @@ static void atoms3_compose_auto(char *out_hero, size_t hero_sz,
 /* Compose the bottom-row hint for either screen. */
 static void atoms3_compose_hint(char *out, size_t out_sz, ui_screen_t screen,
                                 connect_state_t conn) {
-    if (screen == SCREEN_CONNECT) {
-        snprintf(out, out_sz, (conn == PROTOCOL_CONNECTED) ? "SHORT=AUTO" : "HOLD=PAIR");
+    (void)screen;
+    if (conn != PROTOCOL_CONNECTED) {
+        snprintf(out, out_sz, "HOLD=PAIR");
+    } else if (is_camera_recording()) {
+        snprintf(out, out_sz, "TAP=STOP");
+    } else if (motion_logic_is_armed()) {
+        snprintf(out, out_sz, "TAP=REC");
     } else {
-        gps_data_t gps;
-        gps_get_data(&gps);
-        if (gps.has_fix) {
-            snprintf(out, out_sz, "GPS OK %u",
-                     (unsigned)gps.satellite_count);
-        } else if (gps.satellite_count > 0) {
-            snprintf(out, out_sz, "GPS %u sat",
-                     (unsigned)gps.satellite_count);
-        } else {
-            snprintf(out, out_sz, "NO GPS");
-        }
+        snprintf(out, out_sz, "TAP=ARM");
     }
 }
 

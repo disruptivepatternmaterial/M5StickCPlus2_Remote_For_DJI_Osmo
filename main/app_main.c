@@ -291,8 +291,8 @@ void app_main(void) {
          * Two distinct flows live here:
          *   - Plus2 / Plus 1.1 / StickS3: dedicated A and B buttons
          *   - AtomS3: a single screen button measured by press duration —
-         *     short press (< 600 ms) = Next-screen, long press (>= 1500 ms)
-         *     = Execute-current-screen. See docs/ATOMS3_MIGRATION_SPEC.md (D-004).
+         *     short press = AUTO record/arm toggle, long press (>= 1500 ms)
+         *     = connect/reconnect/pair. See docs/ATOMS3_MIGRATION_SPEC.md (D-004).
          */
 #if defined(M5ATOMS3)
         {
@@ -308,17 +308,21 @@ void app_main(void) {
                 /* Latch the long-press exactly once so we don't loop-fire it
                  * while the user keeps holding. */
                 if (!s_long_fired && s_btn_hold_ms >= LONG_PRESS_MS) {
-                    ESP_LOGI(TAG, "AtomS3 long-press: executing current screen");
-                    ui_execute_current_screen();
+                    ESP_LOGI(TAG, "AtomS3 long-press: connect/reconnect/pair");
+                    g_ui_state.current_screen = SCREEN_CONNECT;
+                    g_ui_state.display_needs_update = true;
+                    ui_screen_connect();
                     s_long_fired = true;
                 }
                 s_btn_was_down = true;
             } else if (s_btn_was_down) {
                 /* Released — if no long-press was latched, this counts as a
-                 * short press and cycles to the next screen. */
+                 * short press and toggles the AUTO record/armed state. */
                 if (!s_long_fired) {
-                    ESP_LOGI(TAG, "AtomS3 short-press: cycling screen");
-                    ui_next_screen();
+                    ESP_LOGI(TAG, "AtomS3 short-press: AUTO toggle");
+                    g_ui_state.current_screen = SCREEN_AUTO;
+                    g_ui_state.display_needs_update = true;
+                    ui_screen_auto();
                 }
                 s_btn_was_down = false;
                 s_btn_hold_ms  = 0;

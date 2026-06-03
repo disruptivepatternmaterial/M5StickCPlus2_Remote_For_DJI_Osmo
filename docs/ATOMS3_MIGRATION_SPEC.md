@@ -51,10 +51,11 @@ Unit GPS wiring on AtomS3 HY2.0:
 
 - Single button on GPIO 41 (active-low, pull-up).
 - Behavior:
-  - **Short press (< 600 ms)**: cycle screens (`BT` → `AUTO` → `BT`).
-  - **Long press (≥ 1500 ms)** on `BT` screen: trigger reconnect/pair.
-  - **Long press (≥ 1500 ms)** on `AUTO` screen: manual record toggle
-    override (stops or starts recording regardless of motion state).
+  - **Short press (< 1500 ms)**: AUTO record/arm toggle.
+    - If recording: stop recording, force motion idle, and disarm motion start.
+    - If idle: switch to Video, start recording, force motion active, and arm
+      motion start/stop.
+  - **Long press (≥ 1500 ms)**: connect/reconnect/pair.
 - The button-driven path is the only operator input. No accelerometer
   gestures replace these for AtomS3.
 
@@ -101,7 +102,7 @@ CONNECT screen                     AUTO screen
 |      🤝        |  pairing       |      📸        |  recording
 |      📷        |  idle          |    00:23       |  small elapsed time
 |                |                |                |
-|HOLD = PAIR     |  hint          |GPS OK 11       |  hint
+|HOLD=PAIR       |  hint          |TAP=REC/STOP    |  hint
 +----------------+                +----------------+
 ```
 
