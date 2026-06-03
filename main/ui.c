@@ -1479,6 +1479,8 @@ void ui_update_auto_status_line_only(void) {
 #define A_ICON_Y        (A_MAIN_TOP + (A_MAIN_H - A_ICON_W) / 2)
 #define A_REC_ICON_Y    (A_MAIN_TOP + 2)
 #define A_REC_TIME_Y    (A_REC_ICON_Y + A_ICON_W + 2)
+#define A_TIMER_TIER    1
+#define A_HINT_NUDGE_Y  2
 #define A_HERO_Y        (A_MAIN_TOP + 12)   /* AUTO text hero  */
 #define A_VALUE_Y       (A_MAIN_TOP + 46)   /* AUTO countdown  */
 #define A_LINK_W        16
@@ -1524,6 +1526,14 @@ static void atoms3_clear_main(void) {
     atoms3_gfx_fill_rect(0, A_MAIN_TOP, A_SCREEN_W, A_MAIN_H + 1, M5_COLOR_BLACK);
 }
 
+static void atoms3_format_record_time(char *out, size_t out_sz, unsigned seconds) {
+    if (seconds >= 3600U) {
+        snprintf(out, out_sz, "%uh%02u", seconds / 3600U, (seconds / 60U) % 60U);
+    } else {
+        snprintf(out, out_sz, "%u:%02u", seconds / 60U, seconds % 60U);
+    }
+}
+
 /* Erase a horizontal band sized for the given M5GFX font tier. Used before
  * each text rewrite so a previous longer string can't ghost. The +2 pad
  * absorbs descenders / kerning artifacts. */
@@ -1559,7 +1569,7 @@ static main_icon_t atoms3_connect_icon(connect_state_t conn, bool *blink,
         case PROTOCOL_CONNECTED:
             if (is_camera_recording()) {
                 unsigned t = (unsigned)current_record_time;
-                snprintf(value, value_sz, "%u:%02u", t / 60U, t % 60U);
+                atoms3_format_record_time(value, value_sz, t);
                 return MI_REC;
             }
             return MI_IDLE;
@@ -1599,9 +1609,10 @@ static void atoms3_compose_auto(char *out_hero, size_t hero_sz,
 }
 
 /* Compose the bottom-row hint for either screen. */
-static void atoms3_compose_hint(char *out, size_t out_sz, ui_screen_t screen) {
+static void atoms3_compose_hint(char *out, size_t out_sz, ui_screen_t screen,
+                                connect_state_t conn) {
     if (screen == SCREEN_CONNECT) {
-        snprintf(out, out_sz, "HOLD = PAIR");
+        snprintf(out, out_sz, (conn == PROTOCOL_CONNECTED) ? "SHORT=AUTO" : "HOLD=PAIR");
     } else {
         gps_data_t gps;
         gps_get_data(&gps);
@@ -1680,9 +1691,9 @@ static void atoms3_render(bool force_full) {
         if (want == MI_REC
             && (full || icon_changed
                 || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0)) {
-            atoms3_erase_band_for_tier(A_REC_TIME_Y, 2);
+            atoms3_erase_band_for_tier(A_REC_TIME_Y, A_TIMER_TIER);
             if (value[0] != '\0')
-                atoms3_gfx_print_centered(A_REC_TIME_Y, value, M5_COLOR_WHITE, 2);
+                atoms3_gfx_print_centered(A_REC_TIME_Y, value, M5_COLOR_WHITE, A_TIMER_TIER);
             strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
             s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
         }
@@ -1713,9 +1724,9 @@ static void atoms3_render(bool force_full) {
         if (want == MI_REC
             && (full || icon_changed
                 || strncmp(value, s_atoms3.value, sizeof(s_atoms3.value)) != 0)) {
-            atoms3_erase_band_for_tier(A_REC_TIME_Y, 2);
+            atoms3_erase_band_for_tier(A_REC_TIME_Y, A_TIMER_TIER);
             if (value[0] != '\0')
-                atoms3_gfx_print_centered(A_REC_TIME_Y, value, M5_COLOR_WHITE, 2);
+                atoms3_gfx_print_centered(A_REC_TIME_Y, value, M5_COLOR_WHITE, A_TIMER_TIER);
             strncpy(s_atoms3.value, value, sizeof(s_atoms3.value) - 1);
             s_atoms3.value[sizeof(s_atoms3.value) - 1] = '\0';
         }
@@ -1723,11 +1734,11 @@ static void atoms3_render(bool force_full) {
 
     /* ── Bottom hint band ─────────────────────────────────────────────────── */
     char hint[24];
-    atoms3_compose_hint(hint, sizeof(hint), g_ui_state.current_screen);
+    atoms3_compose_hint(hint, sizeof(hint), g_ui_state.current_screen, conn);
     if (full || strncmp(hint, s_atoms3.hint, sizeof(s_atoms3.hint)) != 0) {
         int h1 = atoms3_gfx_tier_pixel_height(1);
         atoms3_gfx_fill_rect(0, A_MAIN_BOT + 1, A_SCREEN_W, A_BOT_H, A_BAND_BG);
-        atoms3_gfx_print_centered((A_MAIN_BOT + 1) + (A_BOT_H - h1) / 2,
+        atoms3_gfx_print_centered((A_MAIN_BOT + 1) + (A_BOT_H - h1) / 2 + A_HINT_NUDGE_Y,
                                   hint, M5_COLOR_WHITE, 1);
         strncpy(s_atoms3.hint, hint, sizeof(s_atoms3.hint) - 1);
         s_atoms3.hint[sizeof(s_atoms3.hint) - 1] = '\0';

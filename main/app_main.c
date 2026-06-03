@@ -235,11 +235,19 @@ void app_main(void) {
     while (1) {
         if (g_pending_set_video_mode_after_connect && connect_logic_get_state() == PROTOCOL_CONNECTED) {
             g_pending_set_video_mode_after_connect = false;
-            ESP_LOGI("FLOW", "set_mode_after_connect → Video (0x01)");
+            ESP_LOGI("FLOW", "set_mode_after_connect → Video (0x01) + auto record");
+            motion_logic_force_active();
+            motion_logic_set_armed(true);
             if (command_logic_switch_camera_mode(CAMERA_MODE_NORMAL) != NULL) {
                 ESP_LOGI("FLOW", "set_mode_after_connect OK");
             } else {
                 ESP_LOGW("FLOW", "set_mode_after_connect FAIL");
+            }
+            vTaskDelay(pdMS_TO_TICKS(200));
+            if (!is_camera_recording()) {
+                ESP_LOGI("FLOW", "set_mode_after_connect → start_record");
+                (void)command_logic_start_record();
+                s_is_recording = true;
             }
         }
 

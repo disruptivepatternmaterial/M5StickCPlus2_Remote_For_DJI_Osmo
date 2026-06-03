@@ -75,8 +75,8 @@ clear during steady state), D-013 (hard-clipped text, no wrap).
 | Tier  | Pixels | Use                                                |
 |-------|--------|----------------------------------------------------|
 | HERO  | 24 px  | Reserved for rare short alerts only                |
-| VALUE | 16 px  | Recording elapsed time under the camera emoji      |
-| LABEL | 8 px   | Top tag (`DASH`) + bottom hint + boot label        |
+| VALUE | 16 px  | Reserved; not used for the AtomS3 camera timer     |
+| LABEL | 8 px   | Top tag (`DASH`), timer, bottom hint, boot label   |
 
 ### Color rules
 
@@ -99,7 +99,7 @@ CONNECT screen                     AUTO screen
 |                |                |                |
 |      📡        |  finding       |      📷        |  idle camera
 |      🤝        |  pairing       |      📸        |  recording
-|      📷        |  idle          |    00:23       |  elapsed time
+|      📷        |  idle          |    00:23       |  small elapsed time
 |                |                |                |
 |HOLD = PAIR     |  hint          |GPS OK 11       |  hint
 +----------------+                +----------------+

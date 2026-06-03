@@ -59,8 +59,8 @@ power-on within 1 m.
 
 **Pass criteria**
 - Camera transitions to recording within ~2 s of motion onset.
-- AUTO screen keeps the camera emoji layout. It shows `📸` and elapsed `M:SS`
-  only while the camera reports recording.
+- AUTO screen keeps the camera emoji layout. It shows `📸` and a small elapsed
+  timer only while the camera reports recording (`M:SS`, or `HhMM` after 1 h).
 - Recording stops once motion stops + countdown elapses.
 
 ### T-005 — Manual override: long-press while AUTO

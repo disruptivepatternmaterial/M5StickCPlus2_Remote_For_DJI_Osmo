@@ -16,9 +16,9 @@ Motion-triggered dashcam remote for DJI Osmo Action cameras via BLE.
 | Trigger | Action |
 |---------|--------|
 | Motion detected | If not connected: BLE wake + reconnect. Once connected: **set Video mode (0x01)** → short delay → **start recording**. |
-| Still for timeout | **Stop recording** → short delay → **sleep camera**. |
+| Still for timeout | **Stop recording** and keep the camera awake for the next motion event. |
 
-Sequence: wake (if needed) → set mode → shutter start → … → shutter stop → sleep.
+Sequence: wake/reconnect (if needed) → set mode → shutter start → … → shutter stop.
 
 ### Stop-record retry watchdog (added 2026-05-26)
 
@@ -34,6 +34,11 @@ exhaustion is logged at `ESP_LOGE` level (`FLOW: pending_stop GAVE UP …`).
 Asymmetric to start_record on purpose: a missed start gets re-fired by the
 next motion event in the dashcam flow, but a missed stop leaves the camera
 recording silently — the expensive failure mode worth defending against.
+
+The AUTO reconnect path also arms motion and sends `start_record` after setting
+Video mode. This avoids depending on a connection-edge race in the main loop:
+after a successful reconnect, motion start/stop behavior is active even if the
+connection state changed inside the UI worker.
 
 ## Camera Mode
 
