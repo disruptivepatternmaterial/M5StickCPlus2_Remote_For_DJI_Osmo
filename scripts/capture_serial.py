@@ -2,7 +2,7 @@
 """
 Capture serial output from the device to a log file. No TTY required.
 Usage: python3 scripts/capture_serial.py [duration_sec] [output_path]
-Default: 40 seconds, .cursor/debug-7ee220.log
+Default: 40 seconds, .cursor/debug.log
 Port: auto-detect first ESP-style port (115200 baud).
   Priority: cu.usbmodem* (ESP32-S3 USB-JTAG/serial), then cu.usbserial*, ttyUSB*, ttyACM*.
 """
@@ -10,7 +10,7 @@ import sys
 import glob
 import time
 
-DEBUG_LOG_PATH = "/Users/ntableman/Documents/GitHub/M5StickCPlus2_Remote_For_DJI_Osmo/.cursor/debug-2204a3.log"
+DEBUG_LOG_PATH = ".cursor/debug-structured.log"
 
 def find_port():
     patterns = [
@@ -28,7 +28,7 @@ def find_port():
 
 def main():
     duration = int(sys.argv[1]) if len(sys.argv) > 1 else 40
-    out_path = sys.argv[2] if len(sys.argv) > 2 else ".cursor/debug-7ee220.log"
+    out_path = sys.argv[2] if len(sys.argv) > 2 else ".cursor/debug.log"
     port = find_port()
     if not port:
         print("No serial port found (looked for cu.usbserial*, ttyUSB*, ttyACM*)", file=sys.stderr)

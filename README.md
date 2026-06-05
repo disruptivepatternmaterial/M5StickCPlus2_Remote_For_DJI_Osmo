@@ -135,7 +135,7 @@ If `pio` is not on `PATH`:
 - `./scripts/build_and_upload_sticks3.sh`
 - `./scripts/build_and_upload_atoms3.sh`
 - `./scripts/capture_logs.sh`
-- `python3 scripts/capture_serial.py 40 .cursor/debug-7ee220.log`
+- `python3 scripts/capture_serial.py 40 .cursor/debug.log`
 
 ## Device Notes
 

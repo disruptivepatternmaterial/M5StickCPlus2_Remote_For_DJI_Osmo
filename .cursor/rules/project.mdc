@@ -100,10 +100,10 @@ Do NOT guess at runtime behaviour. Get evidence from the device.
 # With device connected via USB:
 ./scripts/capture_logs.sh
 # or:
-python3 scripts/capture_serial.py 40 .cursor/debug-7ee220.log
+python3 scripts/capture_serial.py 40 .cursor/debug.log
 ```
 
-Output goes to `.cursor/debug-7ee220.log`. Read that file to see FLOW lines,
+Output goes to `.cursor/debug.log`. Read that file to see FLOW lines,
 panics, boot messages, and errors.
 
 **If you cannot open the serial port**, ask the user to run the capture script,

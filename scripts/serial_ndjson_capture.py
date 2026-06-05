@@ -8,7 +8,7 @@ import re
 import sys
 import time
 
-LOG = pathlib.Path("/Users/ntableman/Documents/GitHub/.cursor/debug-df0fdc.log")
+LOG = pathlib.Path(".cursor/debug-ndjson.log")
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
