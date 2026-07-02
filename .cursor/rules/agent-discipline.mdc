@@ -1,0 +1,15 @@
+---
+description: Enforce git hygiene and docs sync
+alwaysApply: true
+---
+
+# Git and Docs Discipline
+
+- Start implementation tasks by checking `git status` and relevant diffs.
+- Keep progress updates short and frequent while working.
+- Keep edits scoped; prefer small, reviewable commits.
+- Before claiming done, run the smallest relevant validation (tests, lint, or typecheck).
+- If behavior, API, config, or setup changed, update `README.md` and `docs/**` in the same change.
+- Refresh nearby stale comments/docstrings when logic changes.
+- When a change set is commit-ready, propose a clear commit message and ask for confirmation.
+- Summaries should include what changed, why it changed, and how it was validated.
